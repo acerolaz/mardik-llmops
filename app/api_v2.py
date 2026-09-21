@@ -257,8 +257,6 @@ def analyse(
 ) -> ReponseAnalyseV2:
     try:
         return analyser_v2(requete.texte, client, telemetry)
-    except DocumentTropLong as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except ErreurLLM as exc:
         raise HTTPException(
             status_code=503, detail=f"fournisseur LLM indisponible : {exc}"
