@@ -46,6 +46,7 @@ from typing import Any
 
 from app.telemetry import MetricsStore
 from ops.registry import Registry
+from ops.stats import p95
 
 
 class ErreurDeploiement(RuntimeError):
@@ -95,7 +96,7 @@ def deployer_canary(
     reg = registry or Registry()
     pct = pourcentage
     if pct is None:
-        pct = int(os.environ.get("CANARY_PERCENT", "10") or 10)
+        pct = _parse_pourcentage(os.environ.get("CANARY_PERCENT"), 10)
     reg.definir_canary(version, int(pct))
     index = reg.index()
     reg.journaliser("canary", version=version, pourcentage=index["canary_percent"])
@@ -172,7 +173,7 @@ def surveiller(
         motifs.append("score moyen sous le seuil")
     if (len(erreurs) / len(mesures)) > taux_erreur_max:
         motifs.append("taux d'erreur trop élevé")
-    if _p95(latences) > latence_p95_max_ms:
+    if p95(latences) > latence_p95_max_ms:
         motifs.append("latence P95 trop élevée")
 
     derive = bool(motifs)
@@ -190,11 +191,12 @@ def surveiller(
     }
 
 
-def _p95(valeurs: list[float]) -> float:
-    if not valeurs:
-        return 0.0
-    tri = sorted(valeurs)
-    return tri[min(len(tri) - 1, int(round(0.95 * len(tri) + 0.5)) - 1)]
+def _parse_pourcentage(valeur: str | None, defaut: int) -> int:
+    try:
+        pct = float(valeur) if valeur is not None else float(defaut)
+    except (TypeError, ValueError):
+        pct = float(defaut)
+    return int(max(0, min(100, pct)))
 
 
 def main(argv: list[str] | None = None) -> int:

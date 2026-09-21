@@ -26,6 +26,7 @@ Contrat attendu :
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import sys
 from statistics import median
@@ -33,6 +34,7 @@ from typing import Any
 
 from app.telemetry import MetricsStore
 from ops.registry import Registry
+from ops.stats import p95
 
 
 def resume(
@@ -70,7 +72,7 @@ def resume(
             "requetes": req,
             "trafic_pct": round((req / total * 100), 1) if total else 0.0,
             "latence_p50_ms": round(float(median(latences)), 1) if latences else 0.0,
-            "latence_p95_ms": round(_p95(latences), 1),
+            "latence_p95_ms": round(p95(latences), 1),
             "taux_erreur": round(bloc["erreurs"] / req, 3) if req else 0.0,
             "score_moyen": round(sum(scores) / len(scores), 3) if scores else None,
             "cout_total_eur": round(bloc["cout_total_eur"], 6),
@@ -101,20 +103,21 @@ def rendre_texte(r: dict[str, Any]) -> str:
 
 
 def rendre_html(r: dict[str, Any]) -> str:
-    lignes = ""
+    lignes: list[str] = []
     for version, bloc in sorted(r.get("par_version", {}).items()):
         score = "n/a" if bloc["score_moyen"] is None else f"{bloc['score_moyen']:.3f}"
-        lignes += (
+        lignes.append(
             "<tr>"
-            f"<td>{version}</td>"
+            f"<td>{html.escape(version)}</td>"
             f"<td>{bloc['requetes']}</td>"
             f"<td>{bloc['trafic_pct']:.1f}%</td>"
             f"<td>{bloc['latence_p50_ms']:.1f}</td>"
             f"<td>{bloc['latence_p95_ms']:.1f}</td>"
             f"<td>{bloc['taux_erreur']:.3f}</td>"
-            f"<td>{score}</td>"
+            f"<td>{html.escape(score)}</td>"
             "</tr>"
         )
+    lignes_html = "".join(lignes)
     return f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -132,17 +135,10 @@ def rendre_html(r: dict[str, Any]) -> str:
         <th>P50 ms</th><th>P95 ms</th><th>Taux erreur</th><th>Score moyen</th>
       </tr>
     </thead>
-    <tbody>{lignes}</tbody>
+    <tbody>{lignes_html}</tbody>
   </table>
 </body>
 </html>"""
-
-
-def _p95(valeurs: list[float]) -> float:
-    if not valeurs:
-        return 0.0
-    tri = sorted(valeurs)
-    return tri[min(len(tri) - 1, int(round(0.95 * len(tri) + 0.5)) - 1)]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -24,8 +24,8 @@ Règles :
 """
 from __future__ import annotations
 
-import itertools
 import os
+import random
 
 from app.api_v1 import analyser_v1
 from app.api_v2 import analyser_v2
@@ -37,7 +37,6 @@ from app.telemetry import Telemetry, build_default_telemetry
 from ops.registry import Registry
 
 router = APIRouter(tags=["gateway"])
-_TIRAGES = itertools.count()
 
 
 class RequeteAnalyse(BaseModel):
@@ -81,10 +80,10 @@ def analyse(
     idx = registry.index()
     active = idx.get("active")
     canary = idx.get("canary")
-    canary_percent = int(os.environ.get("CANARY_PERCENT") or idx.get("canary_percent") or 0)
+    canary_percent = _canary_percent(os.environ.get("CANARY_PERCENT"), idx.get("canary_percent"))
     if not active:
         raise HTTPException(status_code=503, detail="aucune version active dans le registre")
-    version = choisir_version(active, canary, canary_percent, next(_TIRAGES) % 100)
+    version = choisir_version(active, canary, canary_percent, random.random() * 100)
     bundle = registry.bundle(version)
     client_llm = LLMClient(bundle)
     try:
@@ -93,8 +92,19 @@ def analyse(
         elif bundle.strategie == "map_reduce_clauses":
             corps = analyser_v2(requete.texte, client_llm, telemetry).model_dump()
         else:
-            raise NotImplementedError(f"gateway.analyse — stratégie inconnue: {bundle.strategie}")
+            raise HTTPException(
+                status_code=501, detail=f"stratégie inconnue: {bundle.strategie}"
+            )
     except ErreurLLM as exc:
         raise HTTPException(status_code=503, detail=f"fournisseur LLM indisponible : {exc}") from exc
     response.headers["X-Mardik-Version"] = version
     return corps
+
+
+def _canary_percent(force: str | None, index_value: object) -> int:
+    brut = force if force is not None else index_value
+    try:
+        valeur = float(brut)
+    except (TypeError, ValueError):
+        return 0
+    return int(max(0, min(100, valeur)))
