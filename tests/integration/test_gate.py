@@ -86,3 +86,27 @@ def test_rapport_depuis_dict_aller_retour(historique):
     rapport = evaluer("v2", sous_ensemble=["c01"], historique=historique)
     donnees = json.loads(json.dumps(rapport.to_dict()))
     assert Rapport.depuis_dict({**donnees, "cle_inconnue": 1}) == rapport
+
+
+def test_cli_codes_de_sortie_et_rapport_json(tmp_path, monkeypatch, capsys):
+    from eval.run_eval import main
+
+    historique = tmp_path / "h.jsonl"
+    sortie = tmp_path / "gate" / "rapport.json"
+    commun = ["--version", "v2", "--historique", str(historique)]
+
+    assert main([*commun, "--contrats", "c01,c02", "--sortie", str(sortie)]) == 0
+    donnees = json.loads(sortie.read_text(encoding="utf-8"))
+    relu = Rapport.depuis_dict(donnees)
+    assert relu.passe and set(relu.par_contrat) == {"c01", "c02"}
+    assert relu.to_dict() == donnees
+
+    assert main([*commun, "--contrats", "c01", "--cout-max-eur", "0"]) == 1
+
+    invalide = tmp_path / "seuils.yaml"
+    invalide.write_text("note_min: 0.75\n", encoding="utf-8")
+    monkeypatch.setenv("SEUILS_PATH", str(invalide))
+    assert main([*commun, "--contrats", "c01"]) == 2
+    assert "latence_p95_max_ms" in capsys.readouterr().err
+
+    assert len(historique.read_text(encoding="utf-8").splitlines()) == 2

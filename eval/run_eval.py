@@ -30,7 +30,10 @@ Contrat attendu :
   le rapport recopie les seuils appliqués et ``mode_eval`` (``mock`` | ``reel``) ;
 * en ligne de commande : ``python -m eval.run_eval --version v2 --seuil 0.75``
   → affiche le rapport, code de sortie 0 si le gate passe, 1 sinon.
-  ``--essais N`` force le nombre de passes, ``--contrats c01,c07`` restreint.
+  ``--essais N`` force le nombre de passes, ``--contrats c01,c07`` restreint,
+  ``--sortie rapport.json`` écrit le rapport (relu par ``ops.deploy publier
+  --rapport``), ``--historique`` change le fichier d'historique ; code 2 si le
+  gate est mal configuré (seuils, golden dataset, stratégie).
 """
 from __future__ import annotations
 
@@ -378,22 +381,38 @@ def afficher(rapport: Rapport) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Gate d'évaluation Mardik")
     parser.add_argument("--version", default="v2")
-    parser.add_argument("--seuil", type=float, default=0.75)
     parser.add_argument("--essais", type=int, default=None)
-    parser.add_argument("--latence-max-ms", type=float, default=8000)
-    parser.add_argument("--cout-max-eur", type=float, default=0.15)
     parser.add_argument("--contrats", default=None, help="liste c01,c02,… (défaut : tous)")
+    parser.add_argument("--seuil", type=float, default=None,
+                        help="surcharge note_min (défaut : eval/seuils.yaml)")
+    parser.add_argument("--latence-max-ms", type=float, default=None,
+                        help="surcharge latence_p95_max_ms (défaut : eval/seuils.yaml)")
+    parser.add_argument("--cout-max-eur", type=float, default=None,
+                        help="surcharge cout_moyen_max_eur (défaut : eval/seuils.yaml)")
+    parser.add_argument("--sortie", default=None, help="écrit le rapport en JSON")
+    parser.add_argument("--historique", default=str(CHEMIN_HISTORIQUE))
     args = parser.parse_args(argv)
     sous_ensemble = re.split(r"[,\s]+", args.contrats.strip()) if args.contrats else None
-    rapport = evaluer(
-        args.version,
-        n_essais=args.essais,
-        seuil=args.seuil,
-        latence_max_ms=args.latence_max_ms,
-        cout_max_eur=args.cout_max_eur,
-        sous_ensemble=sous_ensemble,
-    )
+    try:
+        rapport = evaluer(
+            args.version,
+            n_essais=args.essais,
+            seuil=args.seuil,
+            latence_max_ms=args.latence_max_ms,
+            cout_max_eur=args.cout_max_eur,
+            sous_ensemble=sous_ensemble,
+            historique=Path(args.historique),
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"GATE MAL CONFIGURÉ : {exc}", file=sys.stderr)
+        return 2
     afficher(rapport)
+    if args.sortie:
+        sortie = Path(args.sortie)
+        sortie.parent.mkdir(parents=True, exist_ok=True)
+        sortie.write_text(
+            json.dumps(rapport.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     return 0 if rapport.passe else 1
 
 
