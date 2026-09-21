@@ -61,6 +61,15 @@ def test_phrase_geante_coupee_sans_perte():
     assert all(len(s.texte) <= 500 for s in sections)
 
 
+def test_blanc_en_debut_de_fenetre_sert_de_coupe():
+    texte = " " + "x" * 1000
+    sections = decouper(texte, taille_max=500)
+    assert len(sections) > 1
+    assert sections[0].texte == " "
+    assert "".join(s.texte for s in sections) == texte
+    assert all(len(s.texte) <= 500 for s in sections)
+
+
 def test_regroupe_les_articles_consecutifs_et_suffixe_le_titre():
     texte = "".join(f"Article {i} — Titre {i}\nCourt.\n" for i in range(1, 6))
     sections = decouper(texte)

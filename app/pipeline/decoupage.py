@@ -76,7 +76,7 @@ def _scinder(texte: str, taille_max: int) -> list[str]:
             coupe = fins[-1]
         else:
             blanc = max(fenetre.rfind(" "), fenetre.rfind("\n"))
-            coupe = blanc + 1 if blanc > 0 else taille_max
+            coupe = blanc + 1 if blanc >= 0 else taille_max
         morceaux.append(texte[:coupe])
         texte = texte[coupe:]
     if texte:
