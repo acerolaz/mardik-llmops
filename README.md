@@ -64,16 +64,19 @@ make test-acceptance         # 3 verts, 7 rouges depuis la v2.0.0 (1 vert, 9 rou
 |---|---|
 | `make up` / `make down` | app + proxy + dashboard (docker compose) |
 | `make test` | tout, en `MOCK=on` |
-| `make test-unit` | les tests unitaires du pipeline v2 et de `analyser_v2` (verts) |
-| `make test-integration` | les tests hérités de la remédiation et ceux de la v2 (verts) |
-| `make test-acceptance` | les 10 tests du brief (3 verts, 7 en attente des sous-projets 2 à 4) |
+| `make test-unit` | les tests unitaires du pipeline v2, du gate et des versions (verts) |
+| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate et de la publication (verts) |
+| `make test-acceptance` | les 10 tests du brief (6 verts, 4 en attente des sous-projets 3 et 4) |
 | `make eval VERSION=v2` | le gate d'évaluation sur le **vrai** modèle (`ARGS="--essais 3"`) |
 | `make traffic MODE=derive-score` | trafic sur la gateway + dérive commandée (`normal`, `derive-latence`, `erreurs`) |
 | `make dashboard` | tableau de bord (texte) ; `DASH=serve` pour la page HTML |
-| `make ci` | l'équivalent local du workflow GitHub |
+| `make ci` | l'équivalent local du workflow GitHub (le gate MOCK passe avant l'acceptance) |
 | `make fixtures` | (ré)enregistre les fixtures `MOCK` avec le vrai modèle |
 
-Déploiement : `python -m ops.deploy publier v2.0.0 | canary v2.0.0 --pourcentage 10 | promouvoir v2.0.0 | rollback | surveiller --boucle`.
+Gate : `python -m eval.run_eval --version v2 [--essais 3] [--sortie rapport.json]` (seuils :
+`eval/seuils.yaml`).
+
+Déploiement : `python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport rapport.json] | canary v2.0.0 --pourcentage 10 | promouvoir v2.0.0 | rollback | surveiller --boucle`.
 
 ## Arborescence
 
@@ -82,13 +85,16 @@ app/          main.py (FastAPI, handler 413), api_v1.py [INTOUCHABLE], api_v2.py
               gateway.py [STUB], llm_client.py [FOURNI], telemetry.py [FOURNI]
 app/pipeline/ decoupage.py, extraction.py, consolidation.py, confiance.py, erreurs.py [FAIT — v2.0.0]
 models/       v1/config.yaml [FOURNI], v2/config.yaml [FAIT — bundle map_reduce_clauses]
-eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), run_eval.py [STUB], history.jsonl [GÉNÉRÉ]
-ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [STUB], dashboard.py [STUB]
+eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), seuils.yaml [FAIT],
+              run_eval.py [FAIT — gate], history.jsonl, rapport.json [GÉNÉRÉS]
+ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier FAIT ; canary, promotion,
+              rollback, surveillance en STUB], dashboard.py [STUB]
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
-tests/        unit/ (pipeline et analyser_v2, 61 tests), integration/ (v1 + v2, 17 tests),
-              acceptance/ (10 tests du brief : 3 verts, 7 en attente des sous-projets 2 à 4)
+tests/        unit/ (pipeline, analyser_v2, gate, versions : 105 tests),
+              integration/ (v1 + v2 + gate + publication : 43 tests),
+              acceptance/ (10 tests du brief : 6 verts, 4 en attente des sous-projets 3 et 4)
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [À RÉDIGER],
-              superpowers/specs/ et superpowers/plans/ (spec et plan du moteur v2)
+              superpowers/specs/ et superpowers/plans/ (moteur v2, gate et publication)
 .github/      workflows/ci.yml — gates (MOCK + release), build, publication ; canary en TODO
 ```
 
@@ -199,3 +205,79 @@ pas : concevez avec.
 - `sections_max: 40` est trop bas face à `taille_max_document: 200000` : un
   contrat sous la limite de caractères peut être découpé en plus de 40
   sections et refusé en 413. À trancher avant la calibration du gate.
+
+### Non publié — gate d'évaluation et publication (sous-projet 2)
+
+*2026-09-22 — branche `feature/gate-publication`, commit `ac4f20a`. Spec :
+`docs/superpowers/specs/2026-09-21-gate-publication-design.md`.*
+
+**Ajouté**
+
+- **Seuils versionnés** (`eval/seuils.yaml`, surchargeable par `SEUILS_PATH`) :
+  note globale ≥ 0,75, latence P95 < 8 000 ms, coût moyen < 0,15 € par
+  analyse, avec un `motif` obligatoire. Le seuil de chaque contrat reste
+  `seuil_note` dans `eval/attendus.jsonl` (0,80 pour les contrats longs).
+- **Gate d'évaluation** (`eval/run_eval.py::evaluer`) :
+  - le moteur est choisi par la stratégie du bundle (`monolithique` → v1,
+    `map_reduce_clauses` → v2 ; une v3 = une entrée dans `MOTEURS`) ;
+  - chaque contrat reçoit une note (rappel des clauses attendues) ; avec
+    `n` essais, les notes, latences et coûts sont moyennés ;
+  - le gate calcule la latence P95 et le coût moyen, et liste les motifs
+    d'échec. `passe` est vrai seulement s'il n'y a aucun motif ;
+  - une erreur LLM ou un document trop long donne une note 0 et un motif
+    d'échec, sans faire planter le gate ;
+  - les mesures vont dans `eval/.metrics_eval.jsonl`, jamais dans le
+    `ops/metrics.jsonl` de production.
+- **Rapport** : chaque exécution ajoute une ligne à `eval/history.jsonl`, avec
+  `mode_eval` (`mock` ou `reel`), les seuils appliqués et l'empreinte du
+  bundle. `--sortie rapport.json` écrit le rapport en JSON. Codes de sortie :
+  0 gate passé, 1 gate en échec, 2 gate mal configuré.
+- **Publication** (`ops/deploy.py::publier`) :
+  - si aucune version n'est fournie, le patch suivant de la base `vX.Y` du
+    bundle est calculé à partir du registre et des tags git (`v2.0.0`,
+    puis `v2.0.1`, …) ;
+  - une version fournie est refusée si sa base ne correspond pas au bundle
+    ou si elle est déjà publiée ;
+  - si le rapport vient d'un autre bundle (empreinte différente), la
+    publication est refusée sans rien écrire ;
+  - si le gate échoue, la publication est refusée, rien n'est étiqueté et
+    aucun numéro n'est consommé ; le refus est journalisé
+    (`publication_refusee`) ;
+  - sinon la version est étiquetée dans le registre avec la note, le mode
+    et les seuils du gate, puis journalisée (`publication`).
+- **CLI** : `python -m ops.deploy publier [vX.Y.Z] [--commit SHA] [--rapport
+  rapport.json]` affiche le manifeste en JSON. Relancée sur un commit déjà
+  étiqueté, elle republie le même numéro.
+- **Chaîne CI** (`.github/workflows/ci.yml`, renommé depuis `llmops.yml`) :
+  - `gate-evaluation` joue le gate en `MOCK=on` à chaque PR et à chaque
+    fusion ; il est bloquant ;
+  - `gate-release` joue le gate sur le vrai modèle (3 essais), sur un tag
+    `v*` ou un lancement manuel ;
+  - `build` ;
+  - `publication`, sur `main` ou sur un tag seulement : elle relit le
+    rapport du gate (un seul rapport fait foi), envoie l'artefact
+    `mardik-vX.Y.Z`, puis pose le tag git. Si ce tag existe déjà sur un
+    autre commit, le job échoue et rien n'est écrasé.
+- **`make ci`** joue le gate avant les tests d'acceptance.
+- **Tests** : 44 tests unitaires (`test_seuils`, `test_notation`,
+  `test_moteurs`, `test_versions`) et 26 tests d'intégration (`test_gate`,
+  `test_publication`). 6 tests d'acceptance sur 10 sont verts, dont
+  `test_gate_evaluation_note_par_version`,
+  `test_evaluation_enrichie_latence_et_cout` et
+  `test_etiquetage_version_apres_gate`.
+
+**Modifié** : dans `ops/deploy.py`, `_commit_courant` n'attrape plus que
+`FileNotFoundError` et `CalledProcessError`.
+
+**Inchangé** : le registre (`ops/registry/`), `app/llm_client.py`,
+`app/telemetry.py`, le moteur v2 et `/v1`.
+
+**Reste à faire**
+
+- Les 4 derniers tests d'acceptance attendent les sous-projets 3 et 4 :
+  canary, promotion et rollback, tableau de bord et boucle de dérive.
+- En `MOCK=on`, le gate CI donne 1,0 à la v2 et sa latence n'est pas
+  représentative. Il garantit la non-régression mécanique ; seul le gate de
+  release mesure la qualité réelle.
+- À vérifier au premier run GitHub après la fusion : le tag est posé,
+  l'artefact `mardik-vX.Y.Z` est complet et le job canary n'est pas sauté.
