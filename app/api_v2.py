@@ -24,7 +24,7 @@ gate d'évaluation l'appelle directement).
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -85,54 +85,65 @@ def analyser_v2(texte: str, client: LLMClient, telemetry: Telemetry) -> ReponseA
     with telemetry.tracer.start_as_current_span("analyse.requete") as span:
         span.set_attribute("mardik.version", bundle.version)
         span.set_attribute("mardik.model_version", model_version)
+        termine = False
+        echec_enregistre = False
         try:
             sections = _decouper_dans_les_limites(texte, bundle.parametres)
             span.set_attribute("mardik.sections", len(sections))
             resultats = _extraire_en_parallele(sections, client, telemetry)
+
+            clauses, globale = scorer(consolider([c for c, _ in resultats]), texte)
+            globale = round(globale, 3)
+            reponses = [r for _, r in resultats]
+            ignorees = [
+                (s.titre, r.metadonnees["clauses_ignorees"])
+                for s, r in zip(sections, reponses)
+                if r.metadonnees.get("clauses_ignorees")
+            ]
+            warnings = construire_warnings(
+                clauses, ignorees, float(bundle.parametres.get("seuil_relecture", 0.6))
+            )
+            cout = round(sum(client.cout_eur(r) for r in reponses), 6)
+            tokens = sum(r.tokens for r in reponses)
+            latence = (time.perf_counter() - debut) * 1000
+            span.set_attribute("mardik.confiance_globale", globale)
+            telemetry.metriques.enregistrer(
+                Mesure(
+                    ts=time.time(),
+                    version=bundle.version,
+                    route=ROUTE,
+                    latence_ms=latence,
+                    score=globale,
+                    cout_eur=cout,
+                    appels_llm=len(sections),
+                    tokens=tokens,
+                )
+            )
+            telemetry.logger.info(
+                "analyse.terminee",
+                version=bundle.version,
+                latence_ms=round(latence, 1),
+                sections=len(sections),
+                clauses=len(clauses),
+                confiance_globale=globale,
+            )
+            termine = True
         except DocumentTropLong as exc:
+            echec_enregistre = True
             _enregistrer_echec(telemetry, bundle, debut)
             telemetry.logger.warning("analyse.refusee", version=bundle.version, cause=str(exc))
             raise
         except ErreurLLM as exc:
+            echec_enregistre = True
             _enregistrer_echec(telemetry, bundle, debut)
             telemetry.logger.error("analyse.echec", version=bundle.version, cause=str(exc))
             raise
-
-        clauses, globale = scorer(consolider([c for c, _ in resultats]), texte)
-        globale = round(globale, 3)
-        reponses = [r for _, r in resultats]
-        ignorees = [
-            (s.titre, r.metadonnees["clauses_ignorees"])
-            for s, r in zip(sections, reponses)
-            if r.metadonnees.get("clauses_ignorees")
-        ]
-        warnings = construire_warnings(
-            clauses, ignorees, float(bundle.parametres.get("seuil_relecture", 0.6))
-        )
-        cout = round(sum(client.cout_eur(r) for r in reponses), 6)
-        tokens = sum(r.tokens for r in reponses)
-        latence = (time.perf_counter() - debut) * 1000
-        span.set_attribute("mardik.confiance_globale", globale)
-        telemetry.metriques.enregistrer(
-            Mesure(
-                ts=time.time(),
-                version=bundle.version,
-                route=ROUTE,
-                latence_ms=latence,
-                score=globale,
-                cout_eur=cout,
-                appels_llm=len(sections),
-                tokens=tokens,
-            )
-        )
-        telemetry.logger.info(
-            "analyse.terminee",
-            version=bundle.version,
-            latence_ms=round(latence, 1),
-            sections=len(sections),
-            clauses=len(clauses),
-            confiance_globale=globale,
-        )
+        finally:
+            if not termine and not echec_enregistre:
+                _enregistrer_echec(telemetry, bundle, debut)
+                telemetry.logger.error(
+                    "analyse.echec", version=bundle.version, cause="erreur inattendue"
+                )
     return ReponseAnalyseV2(
         clauses=[ClauseV2(**c.to_dict()) for c in clauses],
         confiance_globale=globale,
@@ -210,14 +221,15 @@ def _extraire_en_parallele(
         finally:
             otel_context.detach(jeton)
 
-    with ThreadPoolExecutor(max_workers=parallelisme) as pool:
+    pool = ThreadPoolExecutor(max_workers=parallelisme)
+    try:
         futures = [pool.submit(tache, section) for section in sections]
-        try:
-            return [f.result() for f in futures]
-        except ErreurLLM:
-            for f in futures:
-                f.cancel()
-            raise
+        wait(futures, return_when=FIRST_EXCEPTION)
+        return [f.result() for f in futures]
+    finally:
+        # Annule les tâches non démarrées ; la première erreur (ErreurLLM ou
+        # autre) interrompt le map, quelle que soit la section qui échoue.
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def _extraire_trace(

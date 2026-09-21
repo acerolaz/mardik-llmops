@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from app.llm_client import Bundle, ErreurLLM, ReponseLLM, reponse_de_repli
+from app.llm_client import Bundle, ReponseLLM, reponse_de_repli
 
 
 def _repli_json(prompt: str) -> str:
@@ -18,6 +18,9 @@ class FauxClient:
     * ``repondre(prompt) -> str`` fabrique le texte renvoyé par le « modèle »
       (par défaut : le repli déterministe par mots-clés de ``llm_client``) ;
     * ``erreur`` est levée à chaque appel si elle est fournie ;
+    * ``erreur_si(prompt) -> BaseException | None`` permet de ne faire échouer
+      que certains appels (identifiés par le contenu du prompt), levée avant
+      le délai simulé pour un échec immédiat et déterministe ;
     * ``delai_s`` simule la latence du fournisseur (tests de parallélisme).
     """
 
@@ -26,13 +29,15 @@ class FauxClient:
         bundle: Bundle | None = None,
         *,
         repondre: Callable[[str], str] = _repli_json,
-        erreur: ErreurLLM | None = None,
+        erreur: BaseException | None = None,
+        erreur_si: Callable[[str], BaseException | None] | None = None,
         delai_s: float = 0.0,
         tokens: int = 100,
     ) -> None:
         self.bundle = bundle or Bundle.charger("v2")
         self._repondre = repondre
         self._erreur = erreur
+        self._erreur_si = erreur_si
         self._delai_s = delai_s
         self._tokens = tokens
         self._verrou = threading.Lock()
@@ -47,6 +52,10 @@ class FauxClient:
         with self._verrou:
             self.prompts.append(prompt_utilisateur)
             self.json_modes.append(json_mode)
+        if self._erreur_si is not None:
+            erreur_ciblee = self._erreur_si(prompt_utilisateur)
+            if erreur_ciblee is not None:
+                raise erreur_ciblee
         if self._delai_s:
             time.sleep(self._delai_s)
         if self._erreur is not None:

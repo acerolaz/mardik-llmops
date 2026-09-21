@@ -67,6 +67,55 @@ def test_erreur_llm_pendant_le_map_journalisee(telemetry, metriques):
     assert metriques.lire()[-1].erreur is True
 
 
+def _contrat_huit_sections() -> str:
+    return "".join(
+        f"Article {i} — Durée\nLe contrat est conclu pour une durée de un an.\n"
+        for i in range(1, 9)
+    )
+
+
+def test_erreur_inattendue_pendant_le_map_annule_les_taches_et_journalise(telemetry, metriques):
+    """Toute erreur (pas seulement ErreurLLM) doit interrompre le map, annuler les tâches
+    en attente et enregistrer exactement une Mesure(erreur=True)."""
+
+    def erreur_si(prompt: str) -> BaseException | None:
+        return RuntimeError("bug interne inattendu") if "Article 1 —" in prompt else None
+
+    client = FauxClient(delai_s=0.2, erreur_si=erreur_si)
+    client.bundle.parametres.update(contexte_max_caracteres=100, parallelisme=2)
+    texte = _contrat_huit_sections()
+
+    avant = len(metriques.lire())
+    with pytest.raises(RuntimeError):
+        analyser_v2(texte, client, telemetry)
+
+    assert client.appels < 8  # les tâches en attente ont été annulées
+    mesures = metriques.lire()[avant:]
+    assert len(mesures) == 1
+    assert mesures[0].erreur is True
+
+
+def test_erreur_llm_pendant_le_map_annule_les_taches_en_attente(telemetry, metriques):
+    """Même comportement d'annulation pour ErreurLLM : le premier échec termine le map,
+    pas le dernier appel soumis."""
+
+    def erreur_si(prompt: str) -> BaseException | None:
+        return ErreurLLM("fournisseur ollama injoignable") if "Article 1 —" in prompt else None
+
+    client = FauxClient(delai_s=0.2, erreur_si=erreur_si)
+    client.bundle.parametres.update(contexte_max_caracteres=100, parallelisme=2)
+    texte = _contrat_huit_sections()
+
+    avant = len(metriques.lire())
+    with pytest.raises(ErreurLLM):
+        analyser_v2(texte, client, telemetry)
+
+    assert client.appels < 8  # les tâches en attente ont été annulées
+    mesures = metriques.lire()[avant:]
+    assert len(mesures) == 1
+    assert mesures[0].erreur is True
+
+
 def test_reponse_hors_schema_produit_des_warnings(telemetry):
     client = FauxClient(repondre=lambda _: "pas du json")
     reponse = analyser_v2(CONTRAT, client, telemetry)
