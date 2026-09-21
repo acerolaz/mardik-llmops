@@ -32,7 +32,8 @@ critères « v2 passe » et « v2 > v1 sur les longs » sont donc atteignables.
 - `eval/run_eval.py` : `evaluer`, `Rapport` enrichi, `charger_seuils`, option CLI `--sortie`
 - `eval/seuils.yaml` : nouveau
 - `ops/deploy.py` : `publier`, `versions_connues`, `prochaine_version`, `charger_rapport`, CLI `publier [version] --commit --rapport`
-- `.github/workflows/llmops.yml` : jobs `gate-evaluation`, `gate-release` (nouveau), `publication`
+- `.github/workflows/ci.yml` : renommage de `llmops.yml` (`git mv`, nom attendu par le brief) ; jobs `gate-evaluation`, `gate-release` (nouveau), `publication`
+- `README.md` : les deux références à `llmops.yml` → `ci.yml`
 - `Makefile` : cible `ci` avec le gate
 - Tests unitaires et d'intégration (§7)
 
@@ -210,7 +211,11 @@ publier(version: str | None = None, *, bundle="v2", commit=None, registry=None,
 - Codes : 0 succès ; 1 refus (`REFUSÉ : <motif>` sur stderr, comportement existant).
 - Les autres sous-commandes sont inchangées.
 
-## 6. Chaîne CI — `.github/workflows/llmops.yml`
+## 6. Chaîne CI — `.github/workflows/ci.yml`
+
+Le fichier `llmops.yml` est renommé `ci.yml` (`git mv`, historique conservé) ;
+le `name:` du workflow devient `ci`. Les références dans `Makefile` et
+`README.md` suivent.
 
 Principe : **un seul rapport fait foi**. Le gate écrit `eval/rapport.json` ;
 la publication le relit au lieu de réévaluer — la note du manifeste est
@@ -243,7 +248,7 @@ exactement celle du gate qui a autorisé la livraison.
 
 **`Makefile`** : la cible `ci` remplace l'`echo TODO` par
 `MOCK=on uv run python -m eval.run_eval --version v2` (et garde un `echo`
-pour le canary, sous-projet 3).
+pour le canary, sous-projet 3, pointant vers `.github/workflows/ci.yml`).
 
 ## 7. Tests
 
@@ -270,7 +275,7 @@ les transactions et `EphemeralClient` ne s'appliquent pas.
 
 ### 7.3 Workflow
 
-`actionlint` sur `llmops.yml` s'il est disponible (`brew` / binaire) ; sinon
+`actionlint` sur `ci.yml` s'il est disponible (`brew` / binaire) ; sinon
 validation YAML (`uv run python -c "import yaml; yaml.safe_load(...)"`). Le
 comportement réel (tag posé, artefact `mardik-vX.Y.Z`) se vérifie sur le
 premier run GitHub après fusion.
