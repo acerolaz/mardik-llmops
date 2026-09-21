@@ -27,16 +27,16 @@ dashboard:          ## tableau de bord en local (texte) — DASH=serve pour la p
 test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 	MOCK=on uv run pytest -q
 
-test-unit:          ## pipeline v2 et analyser_v2 : verts
+test-unit:          ## pipeline v2, analyser_v2, gate (seuils, notation, moteurs) et versions : verts
 	MOCK=on uv run pytest -q tests/unit
 
-test-integration:   ## hérités de la remédiation + v2 : verts
+test-integration:   ## hérités de la remédiation + v2 + gate + publication : verts
 	MOCK=on uv run pytest -q tests/integration
 
-test-acceptance:    ## les 10 tests du brief : 3 verts, 7 rouges (sous-projets 2 à 4)
+test-acceptance:    ## les 10 tests du brief : 6 verts, 4 rouges (sous-projets 3 et 4)
 	MOCK=on uv run pytest -v tests/acceptance
 
-eval:               ## gate d'évaluation sur le VRAI modèle (VERSION=v2, ARGS="--essais 3")
+eval:               ## gate sur le VRAI modèle, seuils de eval/seuils.yaml (VERSION=v2, ARGS="--essais 3 --sortie eval/rapport.json")
 	uv run python -m eval.run_eval --version $(VERSION) $(ARGS)
 
 traffic:            ## trafic sur la gateway (MODE=normal|derive-score|derive-latence|erreurs)
@@ -47,7 +47,7 @@ fixtures:           ## (ré)enregistre les fixtures MOCK en appelant le vrai mod
 	MOCK=record uv run python -m eval.run_eval --version $(VERSION)
 	@echo "fixtures enregistrées dans eval/fixtures/ — à committer"
 
-ci:                 ## l'équivalent local du workflow GitHub (MOCK=on)
+ci:                 ## l'équivalent local du workflow GitHub (MOCK=on) : lint, tests, gate, acceptance
 	uv run ruff check .
 	MOCK=on uv run pytest -q tests/unit
 	MOCK=on uv run pytest -q tests/integration
@@ -63,5 +63,5 @@ fmt:
 	uv run ruff check --fix .
 
 clean:
-	rm -rf .pytest_cache .ruff_cache ops/metrics.jsonl eval/history.jsonl eval/.metrics_eval.jsonl
+	rm -rf .pytest_cache .ruff_cache ops/metrics.jsonl eval/history.jsonl eval/.metrics_eval.jsonl eval/rapport.json
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
