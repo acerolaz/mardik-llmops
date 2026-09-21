@@ -42,7 +42,9 @@ jobs:
         with:
           python-version: "3.11"
       - run: uv sync
-      - name: Tests d'intégration (hérités de la remédiation)
+      - name: Tests unitaires (pipeline v2)
+        run: uv run pytest -q tests/unit
+      - name: Tests d'intégration (hérités de la remédiation + v2)
         run: uv run pytest -q tests/integration
       - name: Tests d'acceptance (le brief)
         run: uv run pytest -q tests/acceptance

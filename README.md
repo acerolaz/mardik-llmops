@@ -13,7 +13,9 @@ Lisez d'abord `docs/besoin_client.md`. Puis `docs/schema_remediation.md`.
 ## Règles du jeu
 
 - **`app/api_v1.py` est intouchable.** Le client historique doit continuer
-  de fonctionner tel quel, à chaque commit. C'est le seul test vert au départ.
+  de fonctionner tel quel, à chaque commit. C'était le seul test vert au
+  départ ; depuis la v2.0.0, `test_contrat_v2_long_analyse_sans_troncature`
+  et `test_erreurs_explicites_jamais_de_500` le sont aussi.
 - **Une version du modèle est un bundle de configuration.** Voyez
   `models/v1/config.yaml` : modèle de base + prompt + paramètres + schéma de
   sortie + stratégie. La v2 (`models/v2/config.yaml`) est le même client LLM
@@ -53,7 +55,7 @@ curl -s localhost:8000/v1/analyse -H 'content-type: application/json' \
      -d @<(jq -Rs '{texte: .}' eval/contrats/c12.txt) | jq '.tronque, .clauses'
 
 python scripts/client_v1.py  # le client historique : vert
-make test-acceptance         # 9 rouges, 1 vert : l'état attendu du lundi matin
+make test-acceptance         # 3 verts, 7 rouges depuis la v2.0.0 (1 vert, 9 rouges au départ)
 ```
 
 ## Commandes
@@ -62,8 +64,9 @@ make test-acceptance         # 9 rouges, 1 vert : l'état attendu du lundi matin
 |---|---|
 | `make up` / `make down` | app + proxy + dashboard (docker compose) |
 | `make test` | tout, en `MOCK=on` |
-| `make test-integration` | les tests hérités de la remédiation (verts) |
-| `make test-acceptance` | les 10 tests du brief |
+| `make test-unit` | les tests unitaires du pipeline v2 et de `analyser_v2` (verts) |
+| `make test-integration` | les tests hérités de la remédiation et ceux de la v2 (verts) |
+| `make test-acceptance` | les 10 tests du brief (3 verts, 7 en attente des sous-projets 2 à 4) |
 | `make eval VERSION=v2` | le gate d'évaluation sur le **vrai** modèle (`ARGS="--essais 3"`) |
 | `make traffic MODE=derive-score` | trafic sur la gateway + dérive commandée (`normal`, `derive-latence`, `erreurs`) |
 | `make dashboard` | tableau de bord (texte) ; `DASH=serve` pour la page HTML |
