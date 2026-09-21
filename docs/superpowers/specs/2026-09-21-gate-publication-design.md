@@ -150,8 +150,10 @@ appliqué. `Rapport.depuis_dict(d)` reconstruit un rapport à partir de son JSON
 ### 4.4 Ligne de commande
 
 `python -m eval.run_eval --version v2 [--essais N] [--contrats c01,c07]
-[--seuil X] [--latence-max-ms X] [--cout-max-eur X] [--sortie chemin.json]`
+[--seuil X] [--latence-max-ms X] [--cout-max-eur X] [--sortie chemin.json]
+[--historique chemin.jsonl]`
 
+- `--historique` (défaut `eval/history.jsonl`) : permet aux tests de ne pas écrire dans le repo.
 - `--sortie` écrit `rapport.to_dict()` en JSON (UTF-8, indenté).
 - Codes de sortie : **0** gate passé, **1** gate en échec, **2** gate mal
   configuré (`ErreurSeuils`, golden dataset incohérent, stratégie inconnue) —
@@ -161,9 +163,12 @@ appliqué. `Rapport.depuis_dict(d)` reconstruit un rapport à partir de son JSON
 
 ### 5.1 Fonctions pures
 
-- `versions_connues(registry) -> set[str]` : `registry.versions()` ∪ tags
-  `git tag -l "v*"` filtrés par `MOTIF_VERSION`. Git absent ou hors dépôt
-  (`FileNotFoundError`, `subprocess.CalledProcessError`) → registre seul.
+- `versions_connues(registry) -> set[str]` : `registry.versions()` ∪
+  `_tags_git()`. `_tags_git()` = `git tag -l "v*" --no-contains HEAD`
+  filtré par `MOTIF_VERSION` : un tag posé **sur le commit publié** est son
+  propre label, pas une version concurrente — sans cela, un run déclenché par
+  le tag `v2.0.3` refuserait `v2.0.3` comme « déjà publiée ». Git absent ou
+  hors dépôt (`FileNotFoundError`, `subprocess.CalledProcessError`) → `set()`.
 - `prochaine_version(version_bundle, connues) -> str` : base `vX.Y` tirée du
   bundle ; aucune `vX.Y.*` connue → `version_bundle` ; sinon
   `vX.Y.{max_patch + 1}`. Les autres bases (`v2.1.*`, `v1.*`) sont ignorées.
@@ -180,12 +185,18 @@ publier(version: str | None = None, *, bundle="v2", commit=None, registry=None,
         seuil=None, rapport=None, versions=None) -> dict
 ```
 
-`versions` (injection pour les tests) remplace `versions_connues(registry)`.
+`publier` ne lit **pas** git lui-même : sinon le test d'acceptance
+`publier("v2.0.0", …)` casserait dès que la CI aura poussé le tag `v2.0.0`.
+Les versions connues sont `set(registry.versions()) | (versions or set())` ;
+c'est la **ligne de commande** (§5.3), appelée par la CI, qui passe
+`versions=versions_connues(registry)` (tags git inclus).
 
 1. `b = Bundle.charger(bundle)`, `registry = registry or Registry()`,
-   `commit = commit or _commit_courant()`, `connues = versions or versions_connues(registry)`.
+   `commit = commit or _commit_courant()`, `connues = set(registry.versions()) | (versions or set())`.
 2. Version : fournie → `valider_version` ; absente → `prochaine_version(b.version, connues)`.
-3. Gate : `rapport` fourni, sinon `evaluer(bundle, seuil=seuil)`. Si
+3. Gate : `rapport` fourni, sinon `evaluer(bundle, seuil=seuil)` (un gate
+   mal configuré — `ValueError` / `FileNotFoundError` — devient
+   `ErreurDeploiement("gate mal configuré : …")`). Si
    `not rapport.passe` : journal `publication_refusee` (`version`, `commit`,
    `motifs`) puis `ErreurDeploiement("gate en échec : " + " ; ".join(motifs))`.
    Rien n'est étiqueté ; aucun numéro n'est consommé.
@@ -205,6 +216,7 @@ publier(version: str | None = None, *, bundle="v2", commit=None, registry=None,
 [--seuil X] [--rapport chemin.json]`
 
 - `version` devient optionnelle.
+- Passe `versions=versions_connues(registry)` à `publier` (tags git ∪ registre).
 - `--rapport` charge le JSON via `Rapport.depuis_dict` (fichier absent ou JSON
   invalide → `ErreurDeploiement`).
 - Affiche le manifeste en **JSON** (`json.dumps`, pas `repr`) sur stdout.
@@ -242,13 +254,21 @@ exactement celle du gate qui a autorisé la livraison.
 - `VERSION=$(jq -r .version manifest.json)`, exporté dans `$GITHUB_ENV`.
 - Artefact `mardik-$VERSION` : `ops/registry/$VERSION/`, `ops/registry/journal.jsonl`, `manifest.json`.
 - **Puis**, hors tag : `git tag "$VERSION" && git push origin "$VERSION"`
-  (le tag n'est posé qu'une fois l'artefact envoyé). Un tag poussé avec
+  (le tag n'est posé qu'une fois l'artefact envoyé) ; si le tag existe déjà
+  sur ce commit (relance d'un run), l'étape ne fait rien. Un tag poussé avec
   `GITHUB_TOKEN` ne relance pas le workflow (pas de boucle). Une course
   résiduelle fait échouer `git push` : le job est rouge, rien n'est écrasé.
 
-**`Makefile`** : la cible `ci` remplace l'`echo TODO` par
-`MOCK=on uv run python -m eval.run_eval --version v2` (et garde un `echo`
-pour le canary, sous-projet 3, pointant vers `.github/workflows/ci.yml`).
+**`Makefile`** : la cible `ci` joue `MOCK=on uv run python -m eval.run_eval
+--version v2` **avant** les tests d'acceptance (qui restent rouges tant que
+les sous-projets 3 et 4 ne sont pas livrés) et garde un `echo` pour le
+canary, pointant vers `.github/workflows/ci.yml`. `eval/rapport.json` est
+ajouté au `.gitignore`.
+
+**Limite connue** : le job `tests` joue aussi l'acceptance ; tant que les 4
+tests des sous-projets 3 et 4 sont rouges, la chaîne GitHub s'arrête avant
+le gate et la publication. C'est l'état actuel de `main`, hors périmètre
+ici ; la chaîne complète tournera au vert une fois le sous-projet 4 livré.
 
 ## 7. Tests
 
@@ -271,7 +291,7 @@ les transactions et `EphemeralClient` ne s'appliquent pas.
 | Fichier | Cas |
 |---|---|
 | `test_gate.py` (fixture locale : `METRICS_EVAL_PATH` en `tmp_path`) | `evaluer("v1", contrats=contrats_courts, historique=h)` : 4 contrats, une ligne dans `h` avec `mode_eval == "mock"`, `seuils`, `bundle_empreinte`. Fournisseur injoignable (`MOCK=off`, `LLM_PROXY_URL` sur port fermé, `LLM_TIMEOUT_S=1`) → `passe` faux, motif « erreur LLM », pas d'exception. Contrat demandé absent → `ValueError`. CLI (`main([...])`, sous-ensemble `c01,c02`) : code 0 ; code 1 avec `--cout-max-eur 0` ; code 2 avec `SEUILS_PATH` pointé vers un fichier invalide ; `--sortie` produit un JSON relu par `Rapport.depuis_dict` à l'identique. |
-| `test_publication.py` | deux `publier(bundle="v2", rapport=r, versions=set(), registry=reg)` successifs sans version → `v2.0.0` puis `v2.0.1` (le 2ᵉ via `registry.versions()`) ; manifeste contenant `mode_eval`, `seuils`, `latence_p95_ms`, `cout_moyen_eur`, `bundle_source`. Gate en échec → `ErreurDeploiement`, journal `publication_refusee`, aucune version ajoutée. Tag `v3.0.0` → refus ; version en double → refus. CLI `publier --commit abc1234 --rapport r.json` → stdout JSON parsable, code 0 ; `--rapport` inexistant → code 1. |
+| `test_publication.py` | deux `publier(bundle="v2", rapport=r, registry=reg)` successifs sans version → `v2.0.0` puis `v2.0.1` ; `versions={"v2.0.4"}` injecté → `v2.0.5` ; manifeste contenant `mode_eval`, `seuils`, `latence_p95_ms`, `cout_moyen_eur`, `bundle_source`. Gate en échec → `ErreurDeploiement`, journal `publication_refusee`, aucune version ajoutée. Tag `v3.0.0` → refus ; version en double → refus. CLI `publier --commit abc1234 --rapport r.json` (tags git simulés par monkeypatch de `ops.deploy._tags_git`) → stdout JSON parsable, code 0, version = tag simulé + 1 ; `--rapport` inexistant → code 1. |
 
 ### 7.3 Workflow
 
@@ -287,7 +307,7 @@ premier run GitHub après fusion.
   `test_evaluation_enrichie_latence_et_cout`,
   `test_etiquetage_version_apres_gate` **verts** ; les 3 tests déjà verts le
   restent ; seuls les 4 tests des sous-projets 3 et 4 restent rouges.
-- `make ci` exécute le gate et sort en 0.
+- `make ci` exécute le gate (`GATE : PASSE`) avant l'étape acceptance.
 - `uv run ruff check .` propre.
 - `git diff main` vide sur `ops/registry/__init__.py`, `app/llm_client.py`,
   `app/telemetry.py`, `tests/conftest.py`, `models/v1/`, `app/api_v1.py`,
