@@ -41,14 +41,67 @@ import argparse
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from app.telemetry import MetricsStore
-from ops.registry import Registry
+from ops.registry import MOTIF_VERSION, Registry
+
+RACINE = Path(__file__).resolve().parent.parent
 
 
 class ErreurDeploiement(RuntimeError):
     pass
+
+
+# ----------------------------------------------------------------- versions
+def _tags_git() -> set[str]:
+    """Tags ``vX.Y.Z`` du dépôt, **hors** ceux posés sur le commit publié.
+
+    Un tag sur HEAD est le label de ce commit, pas une version concurrente :
+    un run déclenché par le tag ``v2.0.3`` doit pouvoir publier ``v2.0.3``.
+    """
+    try:
+        sortie = subprocess.check_output(
+            ["git", "tag", "-l", "v*", "--no-contains", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            cwd=RACINE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return set()
+    return {t.strip() for t in sortie.splitlines() if MOTIF_VERSION.match(t.strip())}
+
+
+def versions_connues(registry: Registry) -> set[str]:
+    """Versions déjà livrées : registre local ∪ tags git (la mémoire en CI)."""
+    return set(registry.versions()) | _tags_git()
+
+
+def _base(version: str) -> tuple[int, int]:
+    majeure, mineure, _ = version.lstrip("v").split(".")
+    return int(majeure), int(mineure)
+
+
+def prochaine_version(version_bundle: str, connues: Iterable[str]) -> str:
+    """Patch suivant sur la base ``vX.Y`` du bundle ; la version du bundle si aucune."""
+    base = _base(version_bundle)
+    patchs = [
+        int(v.rsplit(".", 1)[1]) for v in connues if MOTIF_VERSION.match(v) and _base(v) == base
+    ]
+    if not patchs:
+        return version_bundle
+    return f"v{base[0]}.{base[1]}.{max(patchs) + 1}"
+
+
+def valider_version(version: str, version_bundle: str, connues: Iterable[str]) -> None:
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
+    if _base(version) != _base(version_bundle):
+        raise ErreurDeploiement(f"le tag {version} ne correspond pas au bundle {version_bundle}")
+    if version in set(connues):
+        raise ErreurDeploiement(f"{version} déjà publiée")
 
 
 def _commit_courant() -> str:
@@ -56,7 +109,7 @@ def _commit_courant() -> str:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL
         ).strip()
-    except Exception:
+    except (FileNotFoundError, subprocess.CalledProcessError):
         return "local"
 
 
