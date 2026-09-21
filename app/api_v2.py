@@ -166,7 +166,7 @@ def construire_warnings(
     if not clauses:
         warnings.append("aucune clause détectée — relecture conseillée")
     for clause in clauses:
-        if clause.confiance < seuil:
+        if round(clause.confiance, 2) < seuil:
             warnings.append(
                 f"clause « {clause.type} » : confiance {_fr(clause.confiance)} < {_fr(seuil)}"
                 " — relecture conseillée"

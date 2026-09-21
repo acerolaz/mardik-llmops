@@ -143,3 +143,17 @@ def test_warning_clauses_ignorees_regroupe_les_sections():
 
 def test_pas_de_warning_quand_tout_va_bien():
     assert construire_warnings([Clause("durée", "x", 0.9, [0], confiance=0.9)], [], 0.6) == []
+
+
+def test_warning_seuil_compare_la_valeur_arrondie_affichee():
+    """0,5999 s'affiche « 0,60 » : il ne doit donc pas déclencher le warning « < 0,60 »,
+    sous peine d'un message incohérent (« confiance 0,60 < 0,60 »)."""
+    clause = Clause("garantie", "x", 0.5, [0], confiance=0.5999)
+    assert construire_warnings([clause], [], 0.6) == []
+
+
+def test_warning_seuil_affiche_la_valeur_reellement_comparee():
+    clause = Clause("garantie", "x", 0.5, [0], confiance=0.594)
+    assert construire_warnings([clause], [], 0.6) == [
+        "clause « garantie » : confiance 0,59 < 0,60 — relecture conseillée"
+    ]
