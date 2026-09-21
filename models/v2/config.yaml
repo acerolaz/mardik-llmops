@@ -1,26 +1,73 @@
-# Bundle v2 — la nouvelle version. [À COMPLÉTER — chantier 1]
+# Bundle v2 — la nouvelle version.
 #
 # Même client LLM que la v1 (app/llm_client.py). Ce qui change, c'est ce
-# bundle. La structure est là ; la stratégie, le schéma de sortie et les
-# paramètres sont à décider — et à justifier en revue de conception.
-#
-# Question : qu'est-ce qui, dans ce fichier, fait qu'une version est une version ?
+# bundle : stratégie map-reduce par clauses, prompt par section, sortie JSON
+# contrainte, limites absolues. Toute modification change son empreinte
+# (Bundle.empreinte) donc la version livrée : c'est ce fichier qu'on étiquette,
+# qu'on livre et qu'on rollback.
 
 version: v2.0.0
 modele: ${LLM_MODEL}
-strategie: monolithique          # TODO : map_reduce_clauses (voir app/pipeline/)
+strategie: map_reduce_clauses    # découpage → extraction par section → consolidation → score
 
 prompt: |
-  TODO — le prompt de la v2. Il s'applique à UNE section du contrat (titre +
-  texte), pas au contrat entier. Il doit imposer les libellés de clauses
-  (voir app/llm_client.py::TYPES_CLAUSES) et une sortie JSON.
+  Tu es un assistant juridique. On te donne UNE section d'un contrat commercial :
+  son texte, puis son intitulé. Relève chaque type de clause présent dans cette
+  section, en utilisant uniquement ces libellés :
+  résiliation, pénalité de retard, confidentialité, propriété intellectuelle,
+  limitation de responsabilité, force majeure, durée, prix et paiement,
+  non-concurrence, garantie, données personnelles, droit applicable,
+  exclusivité, reconduction tacite.
+  Pour chaque clause, donne :
+  - "type" : un des libellés ci-dessus, tel quel ;
+  - "extrait" : une phrase COPIÉE MOT POUR MOT de la section, jamais reformulée ;
+  - "confiance" : ta certitude que la clause est bien présente, entre 0 et 1.
+  Si la section ne contient aucune de ces clauses, renvoie {"clauses": []}.
+  Réponds uniquement en JSON.
 
 parametres:
-  temperature: 0.2               # TODO : quelle valeur pour un gate stable ?
-  max_tokens: 300
-  seed: null                     # TODO
-  contexte_max_caracteres: 6000  # par section, plus par contrat
-  essais_eval: 1                 # nombre de passes du gate (moyenne)
+  temperature: 0.0                # déterminisme maximal : un gate stable
+  max_tokens: 800                 # une section regroupe plusieurs articles
+  seed: 42                        # reproductibilité
+  contexte_max_caracteres: 6000   # taille maximale d'une section (découpage)
+  taille_max_document: 200000     # au-delà : 413, jamais de troncature
+  sections_max: 40                # au-delà : 413 (coût et latence non tenables)
+  parallelisme: 8                 # appels LLM simultanés
+  seuil_relecture: 0.6            # une clause sous ce score produit un warning
+  essais_eval: 1                  # nombre de passes du gate (moyenne)
 
-schema_sortie: null              # TODO : le schéma JSON de la sortie (clauses : type, extrait, confiance)
+schema_sortie:
+  type: object
+  required: [clauses]
+  properties:
+    clauses:
+      type: array
+      items:
+        type: object
+        required: [type, extrait, confiance]
+        properties:
+          type:
+            type: string
+            enum:
+              - résiliation
+              - pénalité de retard
+              - confidentialité
+              - propriété intellectuelle
+              - limitation de responsabilité
+              - force majeure
+              - durée
+              - prix et paiement
+              - non-concurrence
+              - garantie
+              - données personnelles
+              - droit applicable
+              - exclusivité
+              - reconduction tacite
+          extrait:
+            type: string
+          confiance:
+            type: number
+            minimum: 0
+            maximum: 1
+
 cout_par_1k_tokens: 0.002
