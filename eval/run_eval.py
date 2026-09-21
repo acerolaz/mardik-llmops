@@ -1,9 +1,9 @@
-"""Le gate d'évaluation. [STUB]
+"""Le gate d'évaluation.
 
 Contrat attendu :
 
-    evaluer(version, *, n_essais=None, seuil=0.75, latence_max_ms=8000,
-            cout_max_eur=0.15, contrats=..., attendus=..., registry=None) -> Rapport
+    evaluer(version, *, n_essais=None, seuil=None, latence_max_ms=None,
+            cout_max_eur=None, contrats=..., attendus=..., registry=None) -> Rapport
 
     Rapport (dataclass, sérialisable en JSON) :
         version, date, essais,
@@ -25,6 +25,9 @@ Contrat attendu :
   dicte la stratégie du bundle (``analyser_v1`` / ``analyser_v2``) ;
 * ``n_essais`` vaut par défaut ``parametres.essais_eval`` du bundle (1 sinon) ;
 * chaque exécution ajoute une ligne à ``eval/history.jsonl`` (le rapport) ;
+* les seuils viennent de ``eval/seuils.yaml`` (``SEUILS_PATH``) ; les
+  arguments ``seuil`` / ``latence_max_ms`` / ``cout_max_eur`` les surchargent ;
+  le rapport recopie les seuils appliqués et ``mode_eval`` (``mock`` | ``reel``) ;
 * en ligne de commande : ``python -m eval.run_eval --version v2 --seuil 0.75``
   → affiche le rapport, code de sortie 0 si le gate passe, 1 sinon.
   ``--essais N`` force le nombre de passes, ``--contrats c01,c07`` restreint.
@@ -37,7 +40,8 @@ import os
 import re
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,8 +49,9 @@ import yaml
 
 from app.api_v1 import analyser_v1
 from app.api_v2 import analyser_v2
-from app.llm_client import Bundle, LLMClient
-from app.telemetry import Telemetry
+from app.llm_client import Bundle, ErreurLLM, LLMClient, mode_mock
+from app.pipeline import DocumentTropLong
+from app.telemetry import NoopSpanExporter, Telemetry, build_telemetry
 from ops.registry import MOTIF_VERSION, Registry
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -54,6 +59,7 @@ DOSSIER_CONTRATS = RACINE / "eval" / "contrats"
 CHEMIN_ATTENDUS = RACINE / "eval" / "attendus.jsonl"
 CHEMIN_HISTORIQUE = RACINE / "eval" / "history.jsonl"
 CHEMIN_SEUILS_DEFAUT = RACINE / "eval" / "seuils.yaml"
+CHEMIN_METRIQUES_EVAL_DEFAUT = RACINE / "eval" / ".metrics_eval.jsonl"
 CLES_SEUILS = ("note_min", "latence_p95_max_ms", "cout_moyen_max_eur")
 
 
@@ -126,9 +132,18 @@ class Rapport:
     passe: bool
     motifs: list[str] = field(default_factory=list)
     seuil: float = 0.75
+    mode_eval: str = "mock"
+    seuils: dict[str, Any] = field(default_factory=dict)
+    bundle_empreinte: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def depuis_dict(cls, data: dict[str, Any]) -> Rapport:
+        """Relit un rapport sérialisé (``--sortie``) ; les clés inconnues sont ignorées."""
+        noms = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in noms})
 
 
 def charger_attendus(chemin: Path = CHEMIN_ATTENDUS) -> dict[str, dict[str, Any]]:
@@ -233,21 +248,118 @@ def moteur_pour(strategie: str) -> Moteur:
         raise ValueError(f"stratégie {strategie!r} sans moteur d'évaluation") from None
 
 
+# --------------------------------------------------------------- évaluation
+def mode_eval() -> str:
+    """``reel`` seulement quand le vrai modèle répond sans enregistrement (``MOCK=off``)."""
+    return "reel" if mode_mock() == "off" else "mock"
+
+
+def _telemetry_eval() -> Telemetry:
+    """Télémétrie du gate : pas de spans, mesures à part de ``ops/metrics.jsonl``."""
+    chemin = os.environ.get("METRICS_EVAL_PATH") or CHEMIN_METRIQUES_EVAL_DEFAUT
+    return build_telemetry(
+        span_exporter=NoopSpanExporter(),
+        metrics_path=chemin,
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+    )
+
+
+def _charger_contrats(
+    dossier: Path, annotes: dict[str, dict[str, Any]], sous_ensemble: list[str] | None
+) -> dict[str, str]:
+    """Textes des contrats retenus ; un golden dataset incohérent ne passe jamais."""
+    ids = sous_ensemble or sorted(annotes)
+    inconnus = [cid for cid in ids if cid not in annotes]
+    if inconnus:
+        raise ValueError(f"contrat(s) sans annotation dans attendus.jsonl : {', '.join(inconnus)}")
+    textes: dict[str, str] = {}
+    for cid in ids:
+        chemin = Path(dossier) / f"{cid}.txt"
+        if not chemin.exists():
+            raise FileNotFoundError(f"contrat annoté introuvable : {chemin}")
+        textes[cid] = chemin.read_text(encoding="utf-8")
+    return textes
+
+
+def _essai_en_erreur(attendu: dict[str, Any]) -> dict[str, Any]:
+    return {**noter_contrat([], attendu), "latence_ms": 0.0, "cout_eur": 0.0}
+
+
 def evaluer(
     version: str,
     *,
     n_essais: int | None = None,
-    seuil: float = 0.75,
-    latence_max_ms: float = 8000.0,
-    cout_max_eur: float = 0.15,
+    seuil: float | None = None,
+    latence_max_ms: float | None = None,
+    cout_max_eur: float | None = None,
     contrats: Path = DOSSIER_CONTRATS,
     attendus: Path = CHEMIN_ATTENDUS,
     registry: Registry | None = None,
     telemetry: Telemetry | None = None,
     sous_ensemble: list[str] | None = None,
     historique: Path | None = CHEMIN_HISTORIQUE,
+    seuils: Path | None = None,
 ) -> Rapport:
-    raise NotImplementedError("eval.run_eval.evaluer — le gate d'évaluation")
+    bundle = charger_bundle(version, registry)
+    moteur = moteur_pour(bundle.strategie)
+    appliques = charger_seuils(seuils).surcharger(
+        note_min=seuil, latence_p95_max_ms=latence_max_ms, cout_moyen_max_eur=cout_max_eur
+    )
+    annotes = charger_attendus(attendus)
+    textes = _charger_contrats(contrats, annotes, sous_ensemble)
+    telemetry = telemetry or _telemetry_eval()
+    n = n_essais or int(bundle.parametres.get("essais_eval") or 1)
+
+    essais: dict[str, list[dict[str, Any]]] = {cid: [] for cid in textes}
+    latences: list[float] = []
+    couts: list[float] = []
+    erreurs: list[str] = []
+    for _ in range(n):
+        for cid, texte in textes.items():
+            try:
+                trouves = moteur(texte, LLMClient(bundle), telemetry)
+            except ErreurLLM as exc:
+                erreurs.append(f"{cid} : erreur LLM — {exc}")
+                essais[cid].append(_essai_en_erreur(annotes[cid]))
+                continue
+            except DocumentTropLong as exc:
+                erreurs.append(f"{cid} : document trop long — {exc}")
+                essais[cid].append(_essai_en_erreur(annotes[cid]))
+                continue
+            mesure = telemetry.metriques.lire()[-1]  # le gate est séquentiel
+            latences.append(mesure.latence_ms)
+            couts.append(mesure.cout_eur)
+            essais[cid].append(
+                {
+                    **noter_contrat(trouves, annotes[cid]),
+                    "latence_ms": mesure.latence_ms,
+                    "cout_eur": mesure.cout_eur,
+                }
+            )
+
+    par_contrat = {cid: combiner_essais(e) for cid, e in essais.items()}
+    note, p95, cout, motifs = agreger(par_contrat, latences, couts, appliques, erreurs)
+    rapport = Rapport(
+        version=bundle.version,
+        date=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        essais=n,
+        note=note,
+        par_contrat=par_contrat,
+        latence_p95_ms=p95,
+        cout_moyen_eur=cout,
+        passe=not motifs,
+        motifs=motifs,
+        seuil=appliques.note_min,
+        mode_eval=mode_eval(),
+        seuils=appliques.to_dict(),
+        bundle_empreinte=bundle.empreinte(),
+    )
+    if historique is not None:
+        historique = Path(historique)
+        historique.parent.mkdir(parents=True, exist_ok=True)
+        with historique.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rapport.to_dict(), ensure_ascii=False) + "\n")
+    return rapport
 
 
 def afficher(rapport: Rapport) -> None:
