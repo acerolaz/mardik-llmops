@@ -63,15 +63,11 @@ class ErreurDeploiement(RuntimeError):
 
 
 # ----------------------------------------------------------------- versions
-def _tags_git() -> set[str]:
-    """Tags ``vX.Y.Z`` du dépôt, **hors** ceux posés sur le commit publié.
-
-    Un tag sur HEAD est le label de ce commit, pas une version concurrente :
-    un run déclenché par le tag ``v2.0.3`` doit pouvoir publier ``v2.0.3``.
-    """
+def _tags_git_motif(*args: str) -> set[str]:
+    """Tags ``v*`` renvoyés par ``git tag -l "v*" <args>``, filtrés par ``MOTIF_VERSION``."""
     try:
         sortie = subprocess.check_output(
-            ["git", "tag", "-l", "v*", "--no-contains", "HEAD"],
+            ["git", "tag", "-l", "v*", *args],
             text=True,
             stderr=subprocess.DEVNULL,
             cwd=RACINE,
@@ -79,6 +75,18 @@ def _tags_git() -> set[str]:
     except (FileNotFoundError, subprocess.CalledProcessError):
         return set()
     return {t.strip() for t in sortie.splitlines() if MOTIF_VERSION.match(t.strip())}
+
+
+def _tags_git() -> set[str]:
+    """Tags ``vX.Y.Z`` du dépôt, **hors** ceux posés sur le commit publié.
+
+    Un tag sur HEAD est le label de ce commit, pas une version concurrente :
+    un run déclenché par le tag ``v2.0.3`` doit pouvoir publier ``v2.0.3``.
+    On calcule donc tous les tags ``v*`` MOINS ceux qui pointent sur HEAD
+    (``--points-at HEAD``) plutôt que ``--no-contains HEAD``, qui exclurait
+    aussi les tags posés sur des commits **descendants** de HEAD.
+    """
+    return _tags_git_motif() - _tags_git_motif("--points-at", "HEAD")
 
 
 def versions_connues(registry: Registry) -> set[str]:
@@ -89,6 +97,23 @@ def versions_connues(registry: Registry) -> set[str]:
 def _base(version: str) -> tuple[int, int]:
     majeure, mineure, _ = version.lstrip("v").split(".")
     return int(majeure), int(mineure)
+
+
+def _tag_de_head(version_bundle: str) -> str | None:
+    """Tag ``vX.Y.Z`` posé sur HEAD, de même base que ``version_bundle``.
+
+    Sert à rendre une relance idempotente : si le commit courant porte déjà
+    un tag de la base publiée (run précédent qui avait posé le tag mais pas
+    poussé l'artefact, ou relance manuelle), on republie CETTE version au
+    lieu de calculer le patch suivant. Le plus grand patch si plusieurs tags
+    de la base sont sur HEAD ; ``None`` si aucun ou si git est absent.
+    """
+    base = _base(version_bundle)
+    tags = _tags_git_motif("--points-at", "HEAD")
+    candidats = [t for t in tags if _base(t) == base]
+    if not candidats:
+        return None
+    return max(candidats, key=lambda t: int(t.rsplit(".", 1)[1]))
 
 
 def prochaine_version(version_bundle: str, connues: Iterable[str]) -> str:
@@ -114,7 +139,10 @@ def valider_version(version: str, version_bundle: str, connues: Iterable[str]) -
 def _commit_courant() -> str:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            cwd=RACINE,
         ).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):
         return "local"
@@ -149,6 +177,12 @@ def publier(
             rapport = evaluer(bundle, seuil=seuil)
         except (ValueError, FileNotFoundError) as exc:
             raise ErreurDeploiement(f"gate mal configuré : {exc}") from exc
+    empreinte_source = source.empreinte()
+    if rapport.bundle_empreinte and rapport.bundle_empreinte != empreinte_source:
+        raise ErreurDeploiement(
+            f"rapport d'un autre bundle : empreinte {rapport.bundle_empreinte} "
+            f"≠ {empreinte_source}"
+        )
     if not rapport.passe:
         registry.journaliser(
             "publication_refusee", version=version, commit=commit, motifs=list(rapport.motifs)
@@ -188,6 +222,10 @@ def charger_rapport(chemin: Path | str) -> Rapport:
         raise ErreurDeploiement(f"rapport de gate introuvable : {chemin}") from exc
     except json.JSONDecodeError as exc:
         raise ErreurDeploiement(f"rapport de gate illisible : {chemin} ({exc})") from exc
+    if not isinstance(data, dict):
+        raise ErreurDeploiement(f"rapport de gate incomplet : {chemin} (attendu un objet JSON)")
+    if not isinstance(data.get("passe"), bool):
+        raise ErreurDeploiement(f"rapport de gate incomplet : {chemin} — passe doit être un booléen")
     try:
         return Rapport.depuis_dict(data)
     except TypeError as exc:
@@ -249,8 +287,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.commande == "publier":
             registry = Registry()
             rapport = charger_rapport(args.rapport) if args.rapport else None
+            version = args.version
+            if version is None:
+                version = _tag_de_head(Bundle.charger(args.bundle).version)
             manifest = publier(
-                args.version,
+                version,
                 bundle=args.bundle,
                 commit=args.commit,
                 registry=registry,

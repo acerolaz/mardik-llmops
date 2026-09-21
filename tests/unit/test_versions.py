@@ -6,7 +6,13 @@ import subprocess
 import pytest
 
 from ops import deploy
-from ops.deploy import ErreurDeploiement, prochaine_version, valider_version, versions_connues
+from ops.deploy import (
+    ErreurDeploiement,
+    _tag_de_head,
+    prochaine_version,
+    valider_version,
+    versions_connues,
+)
 
 
 @pytest.mark.parametrize(
@@ -67,8 +73,36 @@ def test_tags_git_ignore_le_commit_publie_et_filtre_le_motif(monkeypatch):
 
     def faux_git(commande, **kwargs):
         appels.append(commande)
+        if commande == ["git", "tag", "-l", "v*", "--points-at", "HEAD"]:
+            return "v2.0.1-rc\nv2.0.2\n"
         return "v2.0.0\nv2.0.1-rc\nvieux\nv2.0.2\n"
 
     monkeypatch.setattr(subprocess, "check_output", faux_git)
-    assert deploy._tags_git() == {"v2.0.0", "v2.0.2"}
-    assert appels == [["git", "tag", "-l", "v*", "--no-contains", "HEAD"]]
+    assert deploy._tags_git() == {"v2.0.0"}
+    assert appels == [
+        ["git", "tag", "-l", "v*"],
+        ["git", "tag", "-l", "v*", "--points-at", "HEAD"],
+    ]
+
+
+def test_tag_de_head_absent(monkeypatch):
+    monkeypatch.setattr(subprocess, "check_output", lambda *a, **k: "")
+    assert _tag_de_head("v2.0.0") is None
+
+
+def test_tag_de_head_git_absent(monkeypatch):
+    def git_absent(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "check_output", git_absent)
+    assert _tag_de_head("v2.0.0") is None
+
+
+def test_tag_de_head_ignore_les_autres_bases(monkeypatch):
+    monkeypatch.setattr(subprocess, "check_output", lambda *a, **k: "v1.9.9\n")
+    assert _tag_de_head("v2.0.0") is None
+
+
+def test_tag_de_head_prend_le_plus_grand_patch(monkeypatch):
+    monkeypatch.setattr(subprocess, "check_output", lambda *a, **k: "v2.0.3\nv2.0.10\nv1.0.0\n")
+    assert _tag_de_head("v2.0.0") == "v2.0.10"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.llm_client import Bundle
 from eval.run_eval import Rapport
 from ops.deploy import ErreurDeploiement, publier
 
@@ -22,7 +23,7 @@ def _rapport(passe: bool = True, **modifs) -> Rapport:
         "mode_eval": "mock",
         "seuils": {"note_min": 0.75, "latence_p95_max_ms": 8000.0,
                    "cout_moyen_max_eur": 0.15, "motif": "m"},
-        "bundle_empreinte": "x",
+        "bundle_empreinte": Bundle.charger("v2").empreinte(),
     }
     return Rapport(**{**donnees, **modifs})
 
@@ -70,6 +71,12 @@ def test_gate_en_echec_bloque_et_se_journalise(registry):
     assert refus["motifs"] == ["note 0.400 < seuil 0.75"]
 
 
+def test_rapport_d_un_autre_bundle_refuse(registry):
+    with pytest.raises(ErreurDeploiement, match="rapport d'un autre bundle"):
+        publier(bundle="v2", commit="c", registry=registry, rapport=_rapport(bundle_empreinte="autre"))
+    assert registry.versions() == ["v1.0.0"]
+
+
 def test_tag_incoherent_avec_le_bundle(registry):
     with pytest.raises(ErreurDeploiement, match="ne correspond pas"):
         publier("v3.0.0", bundle="v2", commit="c", registry=registry, rapport=_rapport())
@@ -96,6 +103,7 @@ def test_cli_publier_depuis_un_rapport(tmp_path, monkeypatch, capsys):
     from ops import deploy
 
     monkeypatch.setattr(deploy, "_tags_git", lambda: {"v2.0.2"})
+    monkeypatch.setattr(deploy, "_tag_de_head", lambda version_bundle: None)
     chemin = tmp_path / "rapport.json"
     chemin.write_text(json.dumps(_rapport().to_dict()), encoding="utf-8")
 
@@ -106,9 +114,31 @@ def test_cli_publier_depuis_un_rapport(tmp_path, monkeypatch, capsys):
     assert manifeste["mode_eval"] == "mock"
 
 
+def test_cli_relance_publie_le_tag_deja_pose_sur_head(tmp_path, monkeypatch, capsys):
+    """Relance idempotente (F1c) : HEAD porte déjà un tag → on republie CETTE version."""
+    import json
+
+    from ops import deploy
+
+    monkeypatch.setattr(deploy, "_tags_git", lambda: set())
+    monkeypatch.setattr(deploy, "_tag_de_head", lambda version_bundle: "v2.0.7")
+    chemin = tmp_path / "rapport.json"
+    chemin.write_text(json.dumps(_rapport(version="v2.0.7").to_dict()), encoding="utf-8")
+
+    assert deploy.main(["publier", "--commit", "abc1234", "--rapport", str(chemin)]) == 0
+    manifeste = json.loads(capsys.readouterr().out)
+    assert manifeste["version"] == "v2.0.7"
+
+
 @pytest.mark.parametrize(
     ("contenu", "motif"),
-    [(None, "introuvable"), ("{pas du json", "illisible"), ('{"version": "v2.0.0"}', "incomplet")],
+    [
+        (None, "introuvable"),
+        ("{pas du json", "illisible"),
+        ('{"version": "v2.0.0"}', "incomplet"),
+        ("[]", "incomplet"),
+        ('{"version": "v2.0.0", "passe": "false"}', "incomplet"),
+    ],
 )
 def test_cli_rapport_invalide(tmp_path, capsys, contenu, motif):
     from ops import deploy
