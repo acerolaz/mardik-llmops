@@ -3,7 +3,8 @@
 Contrat attendu :
 
     evaluer(version, *, n_essais=None, seuil=None, latence_max_ms=None,
-            cout_max_eur=None, contrats=..., attendus=..., registry=None) -> Rapport
+            cout_max_eur=None, contrats=..., attendus=..., registry=None,
+            telemetry=None, sous_ensemble=None, historique=..., seuils=None) -> Rapport
 
     Rapport (dataclass, sérialisable en JSON) :
         version, date, essais,
@@ -311,7 +312,9 @@ def evaluer(
     annotes = charger_attendus(attendus)
     textes = _charger_contrats(contrats, annotes, sous_ensemble)
     telemetry = telemetry or _telemetry_eval()
-    n = n_essais or int(bundle.parametres.get("essais_eval") or 1)
+    n = n_essais if n_essais is not None else int(bundle.parametres.get("essais_eval") or 1)
+    if n < 1:
+        raise ValueError(f"nombre d'essais invalide : {n} (≥ 1)")
 
     essais: dict[str, list[dict[str, Any]]] = {cid: [] for cid in textes}
     latences: list[float] = []

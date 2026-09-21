@@ -82,6 +82,11 @@ def test_contrat_non_annote():
         evaluer("v1", sous_ensemble=["c99"], historique=None)
 
 
+def test_nombre_d_essais_invalide():
+    with pytest.raises(ValueError, match="nombre d'essais invalide"):
+        evaluer("v1", sous_ensemble=["c01"], n_essais=0, historique=None)
+
+
 def test_rapport_depuis_dict_aller_retour(historique):
     rapport = evaluer("v2", sous_ensemble=["c01"], historique=historique)
     donnees = json.loads(json.dumps(rapport.to_dict()))
@@ -102,6 +107,8 @@ def test_cli_codes_de_sortie_et_rapport_json(tmp_path, monkeypatch, capsys):
     assert relu.to_dict() == donnees
 
     assert main([*commun, "--contrats", "c01", "--cout-max-eur", "0"]) == 1
+
+    assert main([*commun, "--contrats", "c01", "--essais", "0"]) == 2
 
     invalide = tmp_path / "seuils.yaml"
     invalide.write_text("note_min: 0.75\n", encoding="utf-8")
