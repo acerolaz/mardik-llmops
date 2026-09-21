@@ -233,7 +233,7 @@ def _extraire_en_parallele(
                     p.cancel()
                 f.result()  # relance l'exception avec sa traceback d'origine
         return [f.result() for f in futures]
-    except:
+    except BaseException:
         erreur = True
         raise
     finally:
