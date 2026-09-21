@@ -222,9 +222,14 @@ def _extraire_en_parallele(
             otel_context.detach(jeton)
 
     pool = ThreadPoolExecutor(max_workers=parallelisme)
+    futures = [pool.submit(tache, section) for section in sections]
     try:
-        futures = [pool.submit(tache, section) for section in sections]
-        wait(futures, return_when=FIRST_EXCEPTION)
+        done, pending = wait(futures, return_when=FIRST_EXCEPTION)
+        for f in done:
+            if f.exception() is not None:
+                for p in pending:
+                    p.cancel()
+                f.result()  # relance l'exception avec sa traceback d'origine
         return [f.result() for f in futures]
     finally:
         # Annule les tâches non démarrées ; la première erreur (ErreurLLM ou
