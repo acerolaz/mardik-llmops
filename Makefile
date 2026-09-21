@@ -1,4 +1,4 @@
-.PHONY: install up down serve proxy dashboard test test-integration test-acceptance eval traffic ci fixtures lint fmt clean
+.PHONY: install up down serve proxy dashboard test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
 
 MODE ?= normal
 VERSION ?= v2
@@ -24,13 +24,16 @@ proxy:              ## proxy de dérive en local
 dashboard:          ## tableau de bord en local (texte) — DASH=serve pour la page HTML
 	uv run python -m ops.dashboard $(if $(filter serve,$(DASH)),--serve,)
 
-test:               ## tout (intégration + acceptance), MOCK=on
+test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 	MOCK=on uv run pytest -q
 
-test-integration:   ## hérités de la remédiation : verts
+test-unit:          ## pipeline v2 et analyser_v2 : verts
+	MOCK=on uv run pytest -q tests/unit
+
+test-integration:   ## hérités de la remédiation + v2 : verts
 	MOCK=on uv run pytest -q tests/integration
 
-test-acceptance:    ## les 10 tests du brief : 9 rouges, 1 vert au départ
+test-acceptance:    ## les 10 tests du brief : 3 verts, 7 rouges (sous-projets 2 à 4)
 	MOCK=on uv run pytest -v tests/acceptance
 
 eval:               ## gate d'évaluation sur le VRAI modèle (VERSION=v2, ARGS="--essais 3")
@@ -46,6 +49,7 @@ fixtures:           ## (ré)enregistre les fixtures MOCK en appelant le vrai mod
 
 ci:                 ## l'équivalent local du workflow GitHub (MOCK=on)
 	uv run ruff check .
+	MOCK=on uv run pytest -q tests/unit
 	MOCK=on uv run pytest -q tests/integration
 	MOCK=on uv run pytest -q tests/acceptance
 	@echo "TODO gate d'évaluation / publication / canary : voir .github/workflows/llmops.yml"

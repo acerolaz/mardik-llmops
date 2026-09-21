@@ -1,9 +1,11 @@
 """Application FastAPI — [FOURNI].
 
 * ``/v1`` est branché et fonctionnel (le contrat historique) ;
-* ``/v2`` et ``/analyse`` (gateway) sont branchés sur des stubs : tant qu'un
-  module lève ``NotImplementedError``, la route répond **501** avec le nom du
-  chantier restant — jamais un 500 muet.
+* ``/v2`` est implémenté (``DocumentTropLong`` → **413** via le gestionnaire
+  d'exception ci-dessous) ;
+* ``/analyse`` (gateway) reste branché sur un stub : tant qu'un module lève
+  ``NotImplementedError``, la route répond **501** avec le nom du chantier
+  restant — jamais un 500 muet.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app import api_v1, api_v2, gateway
+from app.pipeline import DocumentTropLong
 from app.telemetry import build_default_telemetry
 
 
@@ -38,6 +41,10 @@ def create_app() -> FastAPI:
             status_code=501,
             content={"detail": f"à implémenter : {exc or 'module non implémenté'}"},
         )
+
+    @app.exception_handler(DocumentTropLong)
+    async def _document_trop_long(request: Request, exc: DocumentTropLong) -> JSONResponse:
+        return JSONResponse(status_code=413, content={"detail": str(exc)})
 
     return app
 
