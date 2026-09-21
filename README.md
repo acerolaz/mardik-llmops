@@ -112,3 +112,84 @@ poussent souvent : Ollama en local, ou un plafond — le gate en CI tourne en
 exécutions du gate ne donnent pas la même note : c'est le sujet (seed,
 température, moyenne sur *n* essais, seuil avec marge). Ne le « corrigez »
 pas : concevez avec.
+
+## Changelog
+
+### v1.0.0 — dépôt de départ (cloné)
+
+*2026-09-15 — commit `8c59599`, état « lundi matin » du brief.*
+
+- **`POST /v1/analyse`** en production : bundle `models/v1/config.yaml`,
+  stratégie `monolithique` (un seul appel LLM avec tout le contrat),
+  `temperature: 0.2`, sortie en texte libre (une clause par ligne).
+- **Troncature des contrats longs** : au-delà de `contexte_max_caracteres: 16000`,
+  le contrat est coupé et la réponse porte `"tronque": true` — les clauses de
+  la fin manquent. C'est la douleur de départ.
+- **Fourni** : client LLM unique (`app/llm_client.py`, Ollama ou Azure,
+  `MOCK=on` qui rejoue `eval/fixtures/` ou répond par mots-clés), télémétrie
+  (`app/telemetry.py` : traces OpenTelemetry, logs structlog, métriques JSONL),
+  proxy de dérive (`ops/drift_proxy.py`), registre de versions avec la
+  `v1.0.0` étiquetée et active (`ops/registry/`), client historique
+  (`scripts/client_v1.py`), simulateur de trafic, 12 contrats annotés dont
+  3 longs (`eval/contrats/`, `eval/attendus.jsonl`).
+- **Stubs** (`NotImplementedError`) : `app/api_v2.py`, `app/gateway.py`,
+  `app/pipeline/` (découpage, extraction, consolidation, confiance),
+  `eval/run_eval.py`, `ops/deploy.py`, `ops/dashboard.py` ; bundle
+  `models/v2/config.yaml` à compléter.
+- **Tests** : 6 tests d'intégration v1 verts ; 10 tests d'acceptance dont un
+  seul vert, `test_client_v1_fonctionne`.
+
+### v2.0.0 — moteur v2 (sous-projet 1)
+
+*2026-09-21 — branche `feature/moteur-v2`, commit `a4928ee`. Spec :
+`docs/superpowers/specs/2026-09-21-moteur-v2-design.md`.*
+
+**Ajouté**
+
+- **`POST /v2/analyse`** : contrats longs analysés **sans troncature**, par un
+  map-reduce sur les clauses :
+  1. **Découpage** (`app/pipeline/decoupage.py`) aux intitulés d'articles
+     (`Article 3 — …`, `ARTICLE 3 : …`, `3. Résiliation`), coupe en fin de
+     phrase, articles consécutifs regroupés en sections ≤ 6 000 caractères ;
+     aucun caractère perdu.
+  2. **Extraction** (`extraction.py`) : un appel LLM par section, en parallèle
+     (8 appels simultanés), sortie JSON contrainte par un schéma et validée
+     par Pydantic ; une réponse hors schéma n'interrompt jamais l'analyse.
+  3. **Consolidation** (`consolidation.py`) : une seule clause par type
+     (extrait le plus long, sections réunies).
+  4. **Score de confiance** (`confiance.py`) par clause et global :
+     `ancrage × (0,7 × confiance du LLM + 0,3 × récurrence)`. L'ancrage vérifie
+     que l'extrait cité figure vraiment dans le contrat : une citation
+     inventée obtient un score bas, même si le modèle se dit sûr de lui.
+- **Réponse** : `clauses` (type, extrait, confiance, sections),
+  `confiance_globale`, `model_version` (`v2.0.0-<empreinte du bundle>`),
+  `sections`, `appels_llm`, `latence_ms`, `cout_eur` et `warnings` (clause
+  sous le seuil de relecture de 0,6, réponses LLM hors schéma, aucune clause
+  détectée).
+- **Erreurs explicites, jamais de 500 brut** : `413` pour un document de plus
+  de 200 000 caractères ou de plus de 40 sections (vérifié avant tout appel
+  LLM, donc sans coût), `422` pour un corps invalide, `503` si le fournisseur
+  LLM est indisponible. La première erreur d'un appel annule les appels
+  restants et est mesurée.
+- **Bundle `models/v2/config.yaml`** : stratégie `map_reduce_clauses`, prompt
+  par section, schéma de sortie, `temperature: 0.0`, `seed: 42`, limites
+  absolues.
+- **Télémétrie** : un span `analyse.requete` avec un span `llm.appel` enfant
+  par section, une mesure par requête (latence, score, coût, tokens, erreur),
+  logs `analyse.terminee` / `analyse.echec` / `analyse.refusee`.
+- **Tests** : 61 tests unitaires (`tests/unit/`), 11 tests d'intégration v2
+  (`tests/integration/test_analyse_v2.py`). 3 tests d'acceptance sur 10 sont
+  verts : `test_contrat_v2_long_analyse_sans_troncature`,
+  `test_erreurs_explicites_jamais_de_500` et `test_client_v1_fonctionne`.
+
+**Inchangé** : `/v1` (`app/api_v1.py`, `models/v1/`), `app/llm_client.py`,
+`app/telemetry.py` et les tests fournis.
+
+**Reste à faire**
+
+- Les 7 autres tests d'acceptance attendent les sous-projets 2 à 4 : gate
+  d'évaluation et publication, routage canary et rollback, tableau de bord et
+  boucles de rétroaction.
+- `sections_max: 40` est trop bas face à `taille_max_document: 200000` : un
+  contrat sous la limite de caractères peut être découpé en plus de 40
+  sections et refusé en 413. À trancher avant la calibration du gate.
