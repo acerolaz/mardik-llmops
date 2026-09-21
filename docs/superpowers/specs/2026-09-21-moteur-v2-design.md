@@ -161,7 +161,11 @@ Signatures inchangées par rapport aux stubs.
 
 ### 6.2 `extraction.extraire(section, client) -> tuple[list[Clause], ReponseLLM]`
 
-- Un appel `client.completer(f"Section : {section.titre}\n\n{section.texte}", json_mode=True)`.
+- Un appel `client.completer(f"{section.texte}\n\n---\nSection analysée : {section.titre}", json_mode=True)`.
+  Le texte vient **avant** l'intitulé : l'intitulé n'est qu'un repère (utile
+  quand un article long est scindé), jamais une source d'extrait — sinon le
+  repli `MOCK`, qui cite la première ligne contenant un mot-clé, citerait
+  l'intitulé et l'ancrage chuterait.
 - `ErreurLLM` levée par `completer` (transport / fournisseur) : **propagée** (→ 503).
 - `reponse.json()` en échec (JSON illisible) : **pas d'exception**, retour `[]`,
   `metadonnees["clauses_ignorees"] = 1` et `metadonnees["reponse_invalide"] = True`.
@@ -184,9 +188,9 @@ même type. Entrée vide → `[]`. Fonction pure (ne mute pas les entrées).
 
 ### 6.4 `confiance.scorer(clauses, texte) -> tuple[list[Clause], float]`
 
-- **Normalisation** (extrait et contrat) : minuscules, apostrophes et
-  guillemets typographiques ramenés à leur forme ASCII, blancs multiples
-  réduits à un espace.
+- **Normalisation** (extrait et contrat) : liste des mots `\w+` en
+  minuscules — la ponctuation, les apostrophes typographiques et les blancs
+  multiples sont neutralisés d'office.
 - **Ancrage** ∈ [0, 1] : proportion des trigrammes de mots de l'extrait
   présents dans l'ensemble des trigrammes du contrat. Extrait de moins de 3
   mots : 1 si sous-chaîne du contrat normalisé, sinon 0. Coût linéaire en la
