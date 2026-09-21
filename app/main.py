@@ -1,9 +1,11 @@
 """Application FastAPI — [FOURNI].
 
 * ``/v1`` est branché et fonctionnel (le contrat historique) ;
-* ``/v2`` et ``/analyse`` (gateway) sont branchés sur des stubs : tant qu'un
-  module lève ``NotImplementedError``, la route répond **501** avec le nom du
-  chantier restant — jamais un 500 muet.
+* ``/v2`` est implémenté (``DocumentTropLong`` → **413** via le gestionnaire
+  d'exception ci-dessous) ;
+* ``/analyse`` (gateway) reste branché sur un stub : tant qu'un module lève
+  ``NotImplementedError``, la route répond **501** avec le nom du chantier
+  restant — jamais un 500 muet.
 """
 from __future__ import annotations
 
