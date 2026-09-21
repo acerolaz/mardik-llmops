@@ -36,6 +36,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,63 @@ def _p95(valeurs: list[float]) -> float:
         return 0.0
     tri = sorted(valeurs)
     return tri[min(len(tri) - 1, int(round(0.95 * len(tri) + 0.5)) - 1)]
+
+
+# ----------------------------------------------------------------- notation
+def noter_contrat(trouves: Iterable[str], attendu: dict[str, Any]) -> dict[str, Any]:
+    """Rappel des clauses attendues d'un contrat (fonction pure)."""
+    presentes = set(trouves)
+    attendues: list[str] = list(attendu["clauses_attendues"])
+    trouvees = [c for c in attendues if c in presentes]
+    manquantes = [c for c in attendues if c not in presentes]
+    note = round(len(trouvees) / len(attendues), 4) if attendues else 1.0
+    seuil_note = float(attendu["seuil_note"])
+    return {
+        "note": note,
+        "seuil_note": seuil_note,
+        "passe": note >= seuil_note,
+        "trouvees": trouvees,
+        "manquantes": manquantes,
+    }
+
+
+def combiner_essais(essais: list[dict[str, Any]]) -> dict[str, Any]:
+    """Moyenne des passes d'un contrat ; trouvées / manquantes du dernier essai."""
+    dernier = essais[-1]
+    n = len(essais)
+    note = round(sum(e["note"] for e in essais) / n, 4)
+    return {
+        **dernier,
+        "note": note,
+        "passe": note >= dernier["seuil_note"],
+        "latence_ms": round(sum(e["latence_ms"] for e in essais) / n, 1),
+        "cout_eur": round(sum(e["cout_eur"] for e in essais) / n, 6),
+    }
+
+
+def agreger(
+    par_contrat: dict[str, dict[str, Any]],
+    latences: list[float],
+    couts: list[float],
+    seuils: Seuils,
+    erreurs: Iterable[str] = (),
+) -> tuple[float, float, float, list[str]]:
+    """Note globale, P95, coût moyen et motifs d'échec (liste vide = gate passé)."""
+    notes = [c["note"] for c in par_contrat.values()]
+    note = round(sum(notes) / len(notes), 4) if notes else 0.0
+    p95 = _p95(latences)
+    cout = round(sum(couts) / len(couts), 6) if couts else 0.0
+    motifs = list(erreurs)
+    if note < seuils.note_min:
+        motifs.append(f"note {note:.3f} < seuil {seuils.note_min}")
+    for cid, c in par_contrat.items():
+        if not c["passe"]:
+            motifs.append(f"{cid} : note {c['note']:.2f} < seuil_note {c['seuil_note']:.2f}")
+    if p95 >= seuils.latence_p95_max_ms:
+        motifs.append(f"latence P95 {p95:.0f} ms ≥ {seuils.latence_p95_max_ms:.0f} ms")
+    if cout >= seuils.cout_moyen_max_eur:
+        motifs.append(f"coût moyen {cout:.4f} € ≥ {seuils.cout_moyen_max_eur} €")
+    return note, p95, cout, motifs
 
 
 def evaluer(
