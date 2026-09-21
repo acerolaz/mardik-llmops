@@ -7,7 +7,7 @@ from app.pipeline.confiance import Clause, ancrage, scorer
 
 CONTRAT = (
     "Article 12 — Résiliation\n"
-    "L'une ou l'autre des parties peut résilier le contrat par lettre recommandée "
+    "L’une ou l’autre des parties peut résilier le contrat par lettre recommandée "
     "avec un préavis de trois mois.\n"
 )
 
