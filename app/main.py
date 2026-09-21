@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app import api_v1, api_v2, gateway
+from app.pipeline import DocumentTropLong
 from app.telemetry import build_default_telemetry
 
 
@@ -38,6 +39,10 @@ def create_app() -> FastAPI:
             status_code=501,
             content={"detail": f"à implémenter : {exc or 'module non implémenté'}"},
         )
+
+    @app.exception_handler(DocumentTropLong)
+    async def _document_trop_long(request: Request, exc: DocumentTropLong) -> JSONResponse:
+        return JSONResponse(status_code=413, content={"detail": str(exc)})
 
     return app
 
