@@ -36,14 +36,16 @@ import json
 import os
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from app.llm_client import Bundle
+from app.api_v1 import analyser_v1
+from app.api_v2 import analyser_v2
+from app.llm_client import Bundle, LLMClient
 from app.telemetry import Telemetry
 from ops.registry import MOTIF_VERSION, Registry
 
@@ -206,6 +208,29 @@ def agreger(
     if cout >= seuils.cout_moyen_max_eur:
         motifs.append(f"coût moyen {cout:.4f} € ≥ {seuils.cout_moyen_max_eur} €")
     return note, p95, cout, motifs
+
+
+# ------------------------------------------------------------------ moteurs
+Moteur = Callable[[str, LLMClient, Telemetry], list[str]]
+
+
+def _types_v1(texte: str, client: LLMClient, telemetry: Telemetry) -> list[str]:
+    return list(analyser_v1(texte, client, telemetry).clauses)
+
+
+def _types_v2(texte: str, client: LLMClient, telemetry: Telemetry) -> list[str]:
+    return [c.type for c in analyser_v2(texte, client, telemetry).clauses]
+
+
+# Une nouvelle stratégie (v3…) = une nouvelle entrée ; evaluer ne change pas.
+MOTEURS: dict[str, Moteur] = {"monolithique": _types_v1, "map_reduce_clauses": _types_v2}
+
+
+def moteur_pour(strategie: str) -> Moteur:
+    try:
+        return MOTEURS[strategie]
+    except KeyError:
+        raise ValueError(f"stratégie {strategie!r} sans moteur d'évaluation") from None
 
 
 def evaluer(
