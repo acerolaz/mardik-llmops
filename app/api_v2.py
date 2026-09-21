@@ -233,6 +233,9 @@ def _extraire_en_parallele(
                     p.cancel()
                 f.result()  # relance l'exception avec sa traceback d'origine
         return [f.result() for f in futures]
+    except:
+        erreur = True
+        raise
     finally:
         # Annule les tâches non démarrées ; la première erreur (ErreurLLM ou
         # autre) interrompt le map, quelle que soit la section qui échoue.
