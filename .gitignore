@@ -24,6 +24,7 @@ uv.lock
 
 # Généré à l'exécution
 eval/history.jsonl
+eval/rapport.json
 eval/.metrics_eval.jsonl
 ops/metrics.jsonl
 ops/registry/journal.jsonl

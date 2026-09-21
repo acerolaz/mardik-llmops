@@ -1,0 +1,194 @@
+# Chaîne CI/CD Mardik — gates bloquants → build → artefact étiqueté → canary.
+#
+# Deux niveaux de gate d'évaluation :
+#   * gate-evaluation : MOCK=on, les 12 contrats, à chaque PR et fusion — la CI
+#     ne paie pas et ne dépend pas du fournisseur ;
+#   * gate-release : vrai modèle (3 passes), sur tag v* ou lancement manuel.
+# La publication relit le rapport du gate (un seul rapport fait foi), dépose
+# la version dans le registre du runner, l'envoie en artefact, puis pose le
+# tag git vX.Y.Z (les tags sont la mémoire des versions publiées).
+#
+# Équivalent local : `make ci`.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  MOCK: "on"
+  DRIFT: "off"
+  LLM_PROVIDER: ollama
+  LLM_MODEL: modele-ci
+  OTEL_TRACES: "off"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - run: uv run ruff check .
+
+  tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - name: Tests unitaires (pipeline v2, gate, versions)
+        run: uv run pytest -q tests/unit
+      - name: Tests d'intégration (hérités de la remédiation + v2 + gate + publication)
+        run: uv run pytest -q tests/integration
+      - name: Tests d'acceptance (le brief)
+        run: uv run pytest -q tests/acceptance
+
+  gate-evaluation:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - name: Gate d'évaluation (MOCK, 12 contrats, seuils de eval/seuils.yaml)
+        run: uv run python -m eval.run_eval --version v2 --sortie eval/rapport.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-mock
+          path: |
+            eval/rapport.json
+            eval/history.jsonl
+          if-no-files-found: warn
+
+  gate-release:
+    needs: gate-evaluation
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      MOCK: "off"
+      LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+      AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+      AZURE_AI_API_KEY: ${{ secrets.AZURE_AI_API_KEY }}
+      LLM_PROXY_URL: http://localhost:8080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - name: Proxy LLM (l'app parle toujours au proxy, jamais au fournisseur)
+        run: |
+          nohup uv run python -m ops.drift_proxy > proxy.log 2>&1 &
+          for _ in $(seq 30); do
+            curl -sf http://localhost:8080/_drift && exit 0
+            sleep 1
+          done
+          cat proxy.log
+          exit 1
+      - name: Gate de release (vrai modèle, 3 passes)
+        run: uv run python -m eval.run_eval --version v2 --essais 3 --sortie eval/rapport.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-reel
+          path: |
+            eval/rapport.json
+            eval/history.jsonl
+          if-no-files-found: warn
+
+  build:
+    needs: [gate-evaluation, gate-release]
+    if: >-
+      always()
+      && needs.gate-evaluation.result == 'success'
+      && needs.gate-release.result != 'failure'
+      && needs.gate-release.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image de l'application
+        run: docker build -t mardik:${{ github.sha }} .
+
+  publication:
+    needs: [build, gate-release]
+    if: always() && needs.build.result == 'success' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - name: Rapport du gate de release (vrai modèle)
+        if: needs.gate-release.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: gate-reel
+          path: eval
+      - name: Rapport du gate CI (MOCK)
+        if: needs.gate-release.result != 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: gate-mock
+          path: eval
+      - name: Étiquetage dans le registre
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION_ARG=""
+          if [ "$REF_TYPE" = "tag" ]; then VERSION_ARG="$REF_NAME"; fi
+          uv run python -m ops.deploy publier $VERSION_ARG \
+            --commit "${GITHUB_SHA::7}" --rapport eval/rapport.json > manifest.json
+          cat manifest.json
+          echo "VERSION=$(jq -r .version manifest.json)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mardik-${{ env.VERSION }}
+          path: |
+            ops/registry/${{ env.VERSION }}/
+            ops/registry/journal.jsonl
+            manifest.json
+          if-no-files-found: error
+      - name: Tag git de la version (après l'artefact)
+        if: github.ref_type != 'tag'
+        run: |
+          if git rev-parse -q --verify "refs/tags/$VERSION" > /dev/null; then
+            echo "tag $VERSION déjà posé sur ce commit (relance) — rien à faire"
+          else
+            git tag "$VERSION"
+            git push origin "$VERSION"
+          fi
+
+  deploiement-canary:
+    needs: publication
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      # TODO déploiement canary (sous-projet 3) : récupérer l'artefact mardik-vX.Y.Z,
+      #      `python -m ops.deploy canary vX.Y.Z --pourcentage 10`, puis surveillance
+      #      (`python -m ops.deploy surveiller`) et promotion ou rollback.
+      - run: echo "TODO déploiement canary"

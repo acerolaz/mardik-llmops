@@ -89,7 +89,7 @@ tests/        unit/ (pipeline et analyser_v2, 61 tests), integration/ (v1 + v2, 
               acceptance/ (10 tests du brief : 3 verts, 7 en attente des sous-projets 2 à 4)
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [À RÉDIGER],
               superpowers/specs/ et superpowers/plans/ (spec et plan du moteur v2)
-.github/      workflows/llmops.yml [TEMPLATE] — étapes posées, gates en TODO
+.github/      workflows/ci.yml — gates (MOCK + release), build, publication ; canary en TODO
 ```
 
 ## Les chantiers
@@ -102,7 +102,7 @@ docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, e
    contrats annotés, avec latence et coût. *Deux exécutions ne donnent pas la même
    note : que faites-vous ?*
 4. **La chaîne** — `ops/deploy.py` (étiquetage, canary, promotion, rollback,
-   surveillance) et `.github/workflows/llmops.yml`. *Que peut vérifier la CI sans
+   surveillance) et `.github/workflows/ci.yml`. *Que peut vérifier la CI sans
    le vrai modèle ?*
 5. **Le pilotage** — `app/gateway.py` (routeur canary), `ops/dashboard.py`,
    `docs/exploitation.md`.
