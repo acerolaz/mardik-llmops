@@ -75,14 +75,17 @@ Déploiement : `python -m ops.deploy publier v2.0.0 | canary v2.0.0 --pourcentag
 ## Arborescence
 
 ```
-app/          main.py (FastAPI), api_v1.py [INTOUCHABLE], api_v2.py [STUB], gateway.py [STUB],
-              llm_client.py [FOURNI], telemetry.py [FOURNI], pipeline/ [STUBS]
-models/       v1/config.yaml [FOURNI], v2/config.yaml [À COMPLÉTER]
+app/          main.py (FastAPI, handler 413), api_v1.py [INTOUCHABLE], api_v2.py [FAIT — v2.0.0],
+              gateway.py [STUB], llm_client.py [FOURNI], telemetry.py [FOURNI]
+app/pipeline/ decoupage.py, extraction.py, consolidation.py, confiance.py, erreurs.py [FAIT — v2.0.0]
+models/       v1/config.yaml [FOURNI], v2/config.yaml [FAIT — bundle map_reduce_clauses]
 eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), run_eval.py [STUB], history.jsonl [GÉNÉRÉ]
 ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [STUB], dashboard.py [STUB]
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
-tests/        integration/ (verts), acceptance/ (10 tests du brief)
-docs/         besoin_client.md, schema_remediation.md, exploitation.md [À RÉDIGER]
+tests/        unit/ (pipeline et analyser_v2, 61 tests), integration/ (v1 + v2, 17 tests),
+              acceptance/ (10 tests du brief : 3 verts, 7 en attente des sous-projets 2 à 4)
+docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [À RÉDIGER],
+              superpowers/specs/ et superpowers/plans/ (spec et plan du moteur v2)
 .github/      workflows/llmops.yml [TEMPLATE] — étapes posées, gates en TODO
 ```
 
