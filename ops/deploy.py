@@ -1,13 +1,16 @@
-"""Déploiement : publication, canary, promotion, rollback, surveillance. [STUB]
+"""Déploiement : publication, canary, promotion, rollback, surveillance. [STUB — canary, promotion, rollback, surveillance : sous-projet 3]
 
 Contrat attendu (le registre — ``ops/registry`` — enregistre ; ce module décide) :
 
-    publier(version, *, bundle="v2", commit="local", registry=None, seuil=0.75,
-            rapport=None) -> manifest
-        Étiquette une version : joue le gate d'évaluation (``eval.run_eval.evaluer``)
-        sur le bundle en chantier — sauf si un ``rapport`` est fourni — et
-        REFUSE (``ErreurDeploiement``) si le gate échoue. Sinon dépose le bundle
-        dans le registre avec commit + note d'éval, et journalise ``publication``.
+    publier(version=None, *, bundle="v2", commit=None, registry=None, seuil=None,
+            rapport=None, versions=None) -> manifest
+        Étiquette une version : sans ``version``, le patch suivant de la base
+        ``vX.Y`` du bundle (registre ∪ ``versions``) ; avec, elle doit avoir la
+        même base et ne pas être connue. Joue le gate (``eval.run_eval.evaluer``)
+        sauf si un ``rapport`` est fourni, et REFUSE (``ErreurDeploiement``,
+        journal ``publication_refusee``) s'il échoue. Sinon dépose le bundle dans
+        le registre avec commit, note, mode et seuils du gate, et journalise
+        ``publication``.
 
     deployer_canary(version, pourcentage=None, registry=None) -> index
         Route ``pourcentage`` % du trafic vers ``version`` (défaut : CANARY_PERCENT
@@ -45,8 +48,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from app.llm_client import Bundle
 from app.telemetry import MetricsStore
-from ops.registry import MOTIF_VERSION, Registry
+from eval.run_eval import Rapport, evaluer
+from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry
 
 RACINE = Path(__file__).resolve().parent.parent
 
@@ -114,15 +119,62 @@ def _commit_courant() -> str:
 
 
 def publier(
-    version: str,
+    version: str | None = None,
     *,
     bundle: str = "v2",
     commit: str | None = None,
     registry: Registry | None = None,
-    seuil: float = 0.75,
-    rapport: Any | None = None,
+    seuil: float | None = None,
+    rapport: Rapport | None = None,
+    versions: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.publier — gate puis étiquetage dans le registre")
+    """Étiquette ``version`` (ou le patch suivant) si le gate passe.
+
+    Ne lit pas git : les versions connues sont le registre ∪ ``versions``
+    (la ligne de commande y passe les tags git, cf. ``versions_connues``).
+    """
+    source = Bundle.charger(bundle)
+    registry = registry or Registry()
+    commit = commit or _commit_courant()
+    connues = set(registry.versions()) | set(versions or ())
+    if version is None:
+        version = prochaine_version(source.version, connues)
+    else:
+        valider_version(version, source.version, connues)
+
+    if rapport is None:
+        try:
+            rapport = evaluer(bundle, seuil=seuil)
+        except (ValueError, FileNotFoundError) as exc:
+            raise ErreurDeploiement(f"gate mal configuré : {exc}") from exc
+    if not rapport.passe:
+        registry.journaliser(
+            "publication_refusee", version=version, commit=commit, motifs=list(rapport.motifs)
+        )
+        raise ErreurDeploiement("gate en échec : " + " ; ".join(rapport.motifs))
+
+    details = {
+        "bundle_source": bundle,
+        "mode_eval": rapport.mode_eval,
+        "seuils": rapport.seuils,
+        "latence_p95_ms": rapport.latence_p95_ms,
+        "cout_moyen_eur": rapport.cout_moyen_eur,
+        "essais": rapport.essais,
+    }
+    try:
+        manifest = registry.etiqueter(
+            version, source, commit=commit, note_eval=rapport.note, details=details
+        )
+    except ErreurRegistre as exc:
+        raise ErreurDeploiement(str(exc)) from exc
+    registry.journaliser(
+        "publication",
+        version=version,
+        commit=commit,
+        note_eval=rapport.note,
+        mode_eval=rapport.mode_eval,
+    )
+    return manifest
 
 
 def deployer_canary(
