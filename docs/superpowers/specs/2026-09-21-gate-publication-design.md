@@ -98,8 +98,12 @@ valeur fournie **surcharge** celle du fichier (usage local et tests :
 
 1. **Charger** : bundle (`charger_bundle`, existant), attendus, seuils, contrats
    (restreints à `sous_ensemble` si fourni). Chaque contrat retenu doit exister
-   dans `attendus` **et** dans `contrats/`, sinon `ValueError` explicite avant
-   toute analyse (un golden dataset incohérent ne passe jamais).
+   dans `attendus` **et** dans `contrats/` : contrat annoté sans fichier dans
+   `contrats/` → `FileNotFoundError` ; contrat demandé absent de
+   `attendus.jsonl` → `ValueError` — toutes deux avant toute analyse (un golden
+   dataset incohérent ne passe jamais). `n = n_essais if n_essais is not None
+   else bundle.parametres.get("essais_eval", 1)` ; `n < 1` → `ValueError`
+   également avant toute analyse (donc code 2 en CLI).
 2. **Moteur** : table `MOTEURS = {"monolithique": _types_v1, "map_reduce_clauses": _types_v2}`.
    Chaque adaptateur prend `(texte, client, telemetry)` et renvoie
    `list[str]` des types trouvés (`analyser_v1(...).clauses` ;
@@ -164,11 +168,24 @@ appliqué. `Rapport.depuis_dict(d)` reconstruit un rapport à partir de son JSON
 ### 5.1 Fonctions pures
 
 - `versions_connues(registry) -> set[str]` : `registry.versions()` ∪
-  `_tags_git()`. `_tags_git()` = `git tag -l "v*" --no-contains HEAD`
-  filtré par `MOTIF_VERSION` : un tag posé **sur le commit publié** est son
-  propre label, pas une version concurrente — sans cela, un run déclenché par
-  le tag `v2.0.3` refuserait `v2.0.3` comme « déjà publiée ». Git absent ou
-  hors dépôt (`FileNotFoundError`, `subprocess.CalledProcessError`) → `set()`.
+  `_tags_git()`. `_tags_git()` = tous les tags `v*` (filtrés par
+  `MOTIF_VERSION`) **moins** ceux qui pointent sur HEAD (`git tag -l "v*"
+  --points-at HEAD`) : un tag posé **sur le commit publié** est son propre
+  label, pas une version concurrente — sans cela, un run déclenché par le tag
+  `v2.0.3` refuserait `v2.0.3` comme « déjà publiée ». On n'utilise pas
+  `--no-contains HEAD` : ce filtre exclut aussi les tags posés sur des
+  commits **descendants** de HEAD (tout tag futur deviendrait invisible dès
+  qu'on republie un ancien commit), alors que `--points-at HEAD` n'exclut que
+  le tag exact du commit courant. Git absent ou hors dépôt
+  (`FileNotFoundError`, `subprocess.CalledProcessError`) → `set()` pour
+  chacun des deux appels.
+- `_tag_de_head(version_bundle) -> str | None` : tag `vX.Y.Z` posé sur HEAD
+  (`git tag -l "v*" --points-at HEAD`), de même base `vX.Y` que
+  `version_bundle` ; le plus grand patch si plusieurs ; `None` si aucun ou
+  git absent. Sert à la relance idempotente (§5.3) : si le run précédent a
+  posé le tag mais échoué avant de pousser l'artefact (ou en cas de relance
+  manuelle), la CLI republie explicitement cette version au lieu de calculer
+  le patch suivant — `publier` lui-même ne lit toujours pas git.
 - `prochaine_version(version_bundle, connues) -> str` : base `vX.Y` tirée du
   bundle ; aucune `vX.Y.*` connue → `version_bundle` ; sinon
   `vX.Y.{max_patch + 1}`. Les autres bases (`v2.1.*`, `v1.*`) sont ignorées.
@@ -196,7 +213,11 @@ c'est la **ligne de commande** (§5.3), appelée par la CI, qui passe
 2. Version : fournie → `valider_version` ; absente → `prochaine_version(b.version, connues)`.
 3. Gate : `rapport` fourni, sinon `evaluer(bundle, seuil=seuil)` (un gate
    mal configuré — `ValueError` / `FileNotFoundError` — devient
-   `ErreurDeploiement("gate mal configuré : …")`). Si
+   `ErreurDeploiement("gate mal configuré : …")`). Contrôle d'intégrité : si
+   `rapport.bundle_empreinte` est non vide et diffère de
+   `Bundle.charger(bundle).empreinte()`, `ErreurDeploiement("rapport d'un
+   autre bundle : empreinte … ≠ …")` **avant tout étiquetage** — un rapport
+   d'un autre bundle (ou périmé) ne doit jamais qualifier une publication. Si
    `not rapport.passe` : journal `publication_refusee` (`version`, `commit`,
    `motifs`) puis `ErreurDeploiement("gate en échec : " + " ; ".join(motifs))`.
    Rien n'est étiqueté ; aucun numéro n'est consommé.
@@ -215,7 +236,11 @@ c'est la **ligne de commande** (§5.3), appelée par la CI, qui passe
 `python -m ops.deploy publier [vX.Y.Z] [--bundle v2] [--commit SHA]
 [--seuil X] [--rapport chemin.json]`
 
-- `version` devient optionnelle.
+- `version` devient optionnelle. Si absente, la CLI appelle d'abord
+  `_tag_de_head(Bundle.charger(bundle).version)` : si HEAD porte déjà un tag
+  de la base publiée (relance idempotente), c'est **cette** version qui est
+  passée explicitement à `publier` ; sinon `publier` calcule le patch suivant
+  comme d'habitude.
 - Passe `versions=versions_connues(registry)` à `publier` (tags git ∪ registre).
 - `--rapport` charge le JSON via `Rapport.depuis_dict` (fichier absent ou JSON
   invalide → `ErreurDeploiement`).
@@ -240,8 +265,18 @@ exactement celle du gate qui a autorisé la livraison.
 | `gate-evaluation` | tests | toujours | `MOCK=on` ; `uv run python -m eval.run_eval --version v2 --sortie eval/rapport.json`. Code ≠ 0 → job rouge. Artefact `gate-mock` (`eval/history.jsonl`, `eval/rapport.json`) en `if: always()`. |
 | `gate-release` | gate-evaluation | tag `v*` ou `workflow_dispatch` | environment `release` ; `MOCK=off`, `DRIFT=off`, secrets `LLM_PROVIDER`, `LLM_MODEL`, `AZURE_AI_ENDPOINT`, `AZURE_AI_API_KEY` ; démarre `uv run python -m ops.drift_proxy &` et attend le port 8080 (l'app parle toujours au proxy) ; `run_eval --version v2 --essais 3 --sortie eval/rapport.json`. Artefact `gate-reel` en `if: always()`. |
 | `build` | gate-evaluation, gate-release | `always() && needs.gate-evaluation.result == 'success' && needs.gate-release.result != 'failure' && needs.gate-release.result != 'cancelled'` | `docker build` inchangé |
-| `publication` | build, gate-release | `always() && needs.build.result == 'success' && github.event_name != 'pull_request'` | voir ci-dessous |
-| `deploiement-canary` | publication | inchangé | reste TODO (sous-projet 3, consommera l'artefact `mardik-vX.Y.Z`) |
+| `publication` | build, gate-release | `always() && needs.build.result == 'success' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' \|\| github.ref_type == 'tag')` | voir ci-dessous |
+| `deploiement-canary` | publication | `always() && needs.publication.result == 'success' && (github.ref == 'refs/heads/main' \|\| startsWith(github.ref, 'refs/tags/v'))` | reste TODO (sous-projet 3, consommera l'artefact `mardik-vX.Y.Z`) |
+
+La condition de `publication` restreint la publication effective à `main`
+ou à un tag : un `workflow_dispatch` sur une autre branche peut donc rejouer
+le gate-release (toujours autorisé, cf. §4/`gate-release`) sans jamais poser
+de tag ni toucher au registre. `deploiement-canary` utilise `always()` avec
+un contrôle explicite de `needs.publication.result` : sans `always()`, un
+`if` par défaut hériterait aussi de l'échec/annulation d'un job en amont
+(`build`, `gate-release`) même quand `publication` ne s'exécute pas parce
+qu'elle est hors périmètre (PR, autre branche) — `always()` garantit que
+seul le résultat de `publication` compte.
 
 **Job `publication`**
 
@@ -253,11 +288,27 @@ exactement celle du gate qui a autorisé la livraison.
 - `uv run python -m ops.deploy publier $VERSION_ARG --commit ${GITHUB_SHA::7} --rapport eval/rapport.json > manifest.json`.
 - `VERSION=$(jq -r .version manifest.json)`, exporté dans `$GITHUB_ENV`.
 - Artefact `mardik-$VERSION` : `ops/registry/$VERSION/`, `ops/registry/journal.jsonl`, `manifest.json`.
-- **Puis**, hors tag : `git tag "$VERSION" && git push origin "$VERSION"`
-  (le tag n'est posé qu'une fois l'artefact envoyé) ; si le tag existe déjà
-  sur ce commit (relance d'un run), l'étape ne fait rien. Un tag poussé avec
-  `GITHUB_TOKEN` ne relance pas le workflow (pas de boucle). Une course
-  résiduelle fait échouer `git push` : le job est rouge, rien n'est écrasé.
+- **Puis**, hors tag : l'étape compare `git rev-list -n1 refs/tags/$VERSION`
+  au `$GITHUB_SHA` courant — no-op **seulement si le tag existe déjà et
+  pointe sur ce commit précis** (relance du même run) ; sinon
+  `git tag "$VERSION" && git push origin "$VERSION"` (le tag n'est posé
+  qu'une fois l'artefact envoyé). Si le tag existe déjà mais sur un **autre**
+  commit, `git tag "$VERSION"` échoue (le tag local ne peut pas être recréé)
+  → job rouge, rien n'est écrasé — contrairement à un simple test
+  d'existence (`git rev-parse --verify`), qui aurait pris ce cas pour une
+  relance légitime et resterait silencieusement no-op sur le mauvais commit.
+  Un tag poussé avec `GITHUB_TOKEN` ne relance pas le workflow (pas de
+  boucle). Une course résiduelle fait échouer `git push` : le job est rouge,
+  rien n'est écrasé.
+- **Limite de concurrence** : `concurrency: { group: publication,
+  cancel-in-progress: false }` ne fait la queue que d'**un** run en attente
+  par groupe — GitHub Actions n'empile pas indéfiniment. Si plus de deux
+  fusions se suivent de près, seul le run le plus récent en attente est
+  conservé ; les publications intermédiaires entre les deux sont annulées
+  (`cancelled`), pas exécutées en séquence. Ce n'est pas une perte : le
+  commit le plus récent inclut déjà le contenu des commits qu'il a
+  « sautés », et `prochaine_version` / `versions_connues` recalculent la
+  version suivante correctement au run suivant.
 
 **`Makefile`** : la cible `ci` joue `MOCK=on uv run python -m eval.run_eval
 --version v2` **avant** les tests d'acceptance (qui restent rouges tant que
