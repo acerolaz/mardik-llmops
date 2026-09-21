@@ -126,7 +126,11 @@ jobs:
 
   publication:
     needs: [build, gate-release]
-    if: always() && needs.build.result == 'success' && github.event_name != 'pull_request'
+    if: >-
+      always()
+      && needs.build.result == 'success'
+      && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -175,17 +179,19 @@ jobs:
       - name: Tag git de la version (après l'artefact)
         if: github.ref_type != 'tag'
         run: |
-          if git rev-parse -q --verify "refs/tags/$VERSION" > /dev/null; then
+          if [ "$(git rev-list -n1 "refs/tags/$VERSION" 2>/dev/null)" = "$GITHUB_SHA" ]; then
             echo "tag $VERSION déjà posé sur ce commit (relance) — rien à faire"
           else
-            git tag "$VERSION"
-            git push origin "$VERSION"
+            git tag "$VERSION" && git push origin "$VERSION"
           fi
 
   deploiement-canary:
     needs: publication
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      always()
+      && needs.publication.result == 'success'
+      && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     steps:
       - uses: actions/checkout@v4
       # TODO déploiement canary (sous-projet 3) : récupérer l'artefact mardik-vX.Y.Z,
