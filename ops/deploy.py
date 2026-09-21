@@ -35,12 +35,14 @@ Contrat attendu (le registre — ``ops/registry`` — enregistre ; ce module dé
         En cas de dérive : rollback automatique + entrée au journal.
         Renvoie {"version", "mesures", "derive", "motif", "rollback"}.
 
-Ligne de commande : ``python -m ops.deploy publier v2.0.0 | canary v2.0.0 --pourcentage 10
-| promouvoir v2.0.0 | rollback | surveiller [--boucle]``.
+Ligne de commande : ``python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport r.json]
+| canary v2.0.0 --pourcentage 10 | promouvoir v2.0.0 | rollback | surveiller [--boucle]``.
+``publier`` affiche le manifeste en JSON et tient compte des tags git.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -177,6 +179,21 @@ def publier(
     return manifest
 
 
+def charger_rapport(chemin: Path | str) -> Rapport:
+    """Relit le rapport JSON écrit par ``eval.run_eval --sortie``."""
+    chemin = Path(chemin)
+    try:
+        data = json.loads(chemin.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ErreurDeploiement(f"rapport de gate introuvable : {chemin}") from exc
+    except json.JSONDecodeError as exc:
+        raise ErreurDeploiement(f"rapport de gate illisible : {chemin} ({exc})") from exc
+    try:
+        return Rapport.depuis_dict(data)
+    except TypeError as exc:
+        raise ErreurDeploiement(f"rapport de gate incomplet : {chemin} ({exc})") from exc
+
+
 def deployer_canary(
     version: str, pourcentage: int | None = None, registry: Registry | None = None
 ) -> dict[str, Any]:
@@ -208,9 +225,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Déploiement Mardik")
     sub = parser.add_subparsers(dest="commande", required=True)
     p = sub.add_parser("publier")
-    p.add_argument("version")
+    p.add_argument("version", nargs="?", default=None,
+                   help="vX.Y.Z (défaut : patch suivant de la base du bundle)")
     p.add_argument("--bundle", default="v2")
-    p.add_argument("--seuil", type=float, default=0.75)
+    p.add_argument("--commit", default=None)
+    p.add_argument("--seuil", type=float, default=None)
+    p.add_argument("--rapport", default=None,
+                   help="rapport JSON du gate (eval.run_eval --sortie) ; sinon le gate est joué")
     c = sub.add_parser("canary")
     c.add_argument("version")
     c.add_argument("--pourcentage", type=int, default=None)
@@ -226,7 +247,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.commande == "publier":
-            print(publier(args.version, bundle=args.bundle, seuil=args.seuil))
+            registry = Registry()
+            rapport = charger_rapport(args.rapport) if args.rapport else None
+            manifest = publier(
+                args.version,
+                bundle=args.bundle,
+                commit=args.commit,
+                registry=registry,
+                seuil=args.seuil,
+                rapport=rapport,
+                versions=versions_connues(registry),
+            )
+            print(json.dumps(manifest, ensure_ascii=False, indent=2))
         elif args.commande == "canary":
             print(deployer_canary(args.version, args.pourcentage))
         elif args.commande == "promouvoir":

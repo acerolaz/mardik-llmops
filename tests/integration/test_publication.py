@@ -88,3 +88,33 @@ def test_gate_mal_configure(registry, tmp_path, monkeypatch):
     monkeypatch.setenv("SEUILS_PATH", str(invalide))
     with pytest.raises(ErreurDeploiement, match="gate mal configuré"):
         publier(bundle="v2", commit="c", registry=registry)
+
+
+def test_cli_publier_depuis_un_rapport(tmp_path, monkeypatch, capsys):
+    import json
+
+    from ops import deploy
+
+    monkeypatch.setattr(deploy, "_tags_git", lambda: {"v2.0.2"})
+    chemin = tmp_path / "rapport.json"
+    chemin.write_text(json.dumps(_rapport().to_dict()), encoding="utf-8")
+
+    assert deploy.main(["publier", "--commit", "abc1234", "--rapport", str(chemin)]) == 0
+    manifeste = json.loads(capsys.readouterr().out)
+    assert manifeste["version"] == "v2.0.3"
+    assert manifeste["commit"] == "abc1234"
+    assert manifeste["mode_eval"] == "mock"
+
+
+@pytest.mark.parametrize(
+    ("contenu", "motif"),
+    [(None, "introuvable"), ("{pas du json", "illisible"), ('{"version": "v2.0.0"}', "incomplet")],
+)
+def test_cli_rapport_invalide(tmp_path, capsys, contenu, motif):
+    from ops import deploy
+
+    chemin = tmp_path / "rapport.json"
+    if contenu is not None:
+        chemin.write_text(contenu, encoding="utf-8")
+    assert deploy.main(["publier", "--rapport", str(chemin)]) == 1
+    assert motif in capsys.readouterr().err
