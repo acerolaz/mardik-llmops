@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from statistics import median
 from typing import Any
 
 from app.telemetry import MetricsStore
@@ -40,15 +41,108 @@ def resume(
     fenetre_s: float = 300,
     registry: Registry | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError("dashboard.resume — agrégats par version sur la fenêtre")
+    store = metriques or MetricsStore()
+    reg = registry or Registry()
+    mesures = store.lire(depuis_s=fenetre_s)
+    total = len(mesures)
+
+    par_version: dict[str, dict[str, Any]] = {}
+    for m in mesures:
+        bloc = par_version.setdefault(
+            m.version,
+            {"requetes": 0, "latences": [], "scores": [], "erreurs": 0, "cout_total_eur": 0.0},
+        )
+        bloc["requetes"] += 1
+        bloc["cout_total_eur"] += float(m.cout_eur)
+        if m.erreur:
+            bloc["erreurs"] += 1
+            continue
+        bloc["latences"].append(float(m.latence_ms))
+        if m.score is not None:
+            bloc["scores"].append(float(m.score))
+
+    resultat: dict[str, dict[str, Any]] = {}
+    for version, bloc in par_version.items():
+        req = bloc["requetes"]
+        latences = bloc["latences"]
+        scores = bloc["scores"]
+        resultat[version] = {
+            "requetes": req,
+            "trafic_pct": round((req / total * 100), 1) if total else 0.0,
+            "latence_p50_ms": round(float(median(latences)), 1) if latences else 0.0,
+            "latence_p95_ms": round(_p95(latences), 1),
+            "taux_erreur": round(bloc["erreurs"] / req, 3) if req else 0.0,
+            "score_moyen": round(sum(scores) / len(scores), 3) if scores else None,
+            "cout_total_eur": round(bloc["cout_total_eur"], 6),
+        }
+
+    return {
+        "fenetre_s": fenetre_s,
+        "total": total,
+        "par_version": resultat,
+        "journal": reg.journal()[-5:],
+    }
 
 
 def rendre_texte(r: dict[str, Any]) -> str:
-    raise NotImplementedError("dashboard.rendre_texte — rendu texte du résumé")
+    lignes = [f"Fenêtre: {r['fenetre_s']} s — total: {r['total']} requêtes"]
+    for version, bloc in sorted(r.get("par_version", {}).items()):
+        score = "n/a" if bloc["score_moyen"] is None else f"{bloc['score_moyen']:.3f}"
+        lignes.append(
+            f"- {version} | trafic={bloc['trafic_pct']:.1f}% ({bloc['requetes']})"
+            f" | latence p50/p95={bloc['latence_p50_ms']:.1f}/{bloc['latence_p95_ms']:.1f} ms"
+            f" | erreurs={bloc['taux_erreur']:.3f} | score={score}"
+        )
+    if r.get("journal"):
+        lignes.append("Derniers événements:")
+        for entree in r["journal"]:
+            lignes.append(f"  - {entree.get('date', '')} {entree.get('evenement', '')}")
+    return "\n".join(lignes)
 
 
 def rendre_html(r: dict[str, Any]) -> str:
-    raise NotImplementedError("dashboard.rendre_html — page HTML auto-rafraîchie")
+    lignes = ""
+    for version, bloc in sorted(r.get("par_version", {}).items()):
+        score = "n/a" if bloc["score_moyen"] is None else f"{bloc['score_moyen']:.3f}"
+        lignes += (
+            "<tr>"
+            f"<td>{version}</td>"
+            f"<td>{bloc['requetes']}</td>"
+            f"<td>{bloc['trafic_pct']:.1f}%</td>"
+            f"<td>{bloc['latence_p50_ms']:.1f}</td>"
+            f"<td>{bloc['latence_p95_ms']:.1f}</td>"
+            f"<td>{bloc['taux_erreur']:.3f}</td>"
+            f"<td>{score}</td>"
+            "</tr>"
+        )
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="refresh" content="5" />
+  <title>Mardik dashboard</title>
+</head>
+<body>
+  <h1>Mardik dashboard</h1>
+  <p>Fenêtre: {r["fenetre_s"]} s — total: {r["total"]} requêtes</p>
+  <table border="1" cellspacing="0" cellpadding="6">
+    <thead>
+      <tr>
+        <th>Version</th><th>Requêtes</th><th>Trafic</th>
+        <th>P50 ms</th><th>P95 ms</th><th>Taux erreur</th><th>Score moyen</th>
+      </tr>
+    </thead>
+    <tbody>{lignes}</tbody>
+  </table>
+</body>
+</html>"""
+
+
+def _p95(valeurs: list[float]) -> float:
+    if not valeurs:
+        return 0.0
+    tri = sorted(valeurs)
+    return tri[min(len(tri) - 1, int(round(0.95 * len(tri) + 0.5)) - 1)]
 
 
 def main(argv: list[str] | None = None) -> int:

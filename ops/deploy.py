@@ -38,6 +38,7 @@ Ligne de commande : ``python -m ops.deploy publier v2.0.0 | canary v2.0.0 --pour
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -69,21 +70,69 @@ def publier(
     seuil: float = 0.75,
     rapport: Any | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.publier — gate puis étiquetage dans le registre")
+    reg = registry or Registry()
+    if rapport is None:
+        from eval.run_eval import evaluer
+
+        rapport = evaluer(bundle, seuil=seuil, registry=reg)
+    if not rapport.passe:
+        raise ErreurDeploiement("gate en échec : " + " ; ".join(rapport.motifs))
+    from app.llm_client import Bundle
+
+    manifest = reg.etiqueter(
+        version,
+        Bundle.charger(bundle),
+        commit=commit or _commit_courant(),
+        note_eval=rapport.note,
+    )
+    reg.journaliser("publication", version=version, bundle=bundle, note_eval=rapport.note)
+    return manifest
 
 
 def deployer_canary(
     version: str, pourcentage: int | None = None, registry: Registry | None = None
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.deployer_canary — X % du trafic vers la version")
+    reg = registry or Registry()
+    pct = pourcentage
+    if pct is None:
+        pct = int(os.environ.get("CANARY_PERCENT", "10") or 10)
+    reg.definir_canary(version, int(pct))
+    index = reg.index()
+    reg.journaliser("canary", version=version, pourcentage=index["canary_percent"])
+    return index
 
 
 def promouvoir(version: str, registry: Registry | None = None) -> dict[str, Any]:
-    raise NotImplementedError("deploy.promouvoir — la version devient active à 100 %")
+    reg = registry or Registry()
+    reg.manifest(version)
+    avant = reg.index()
+    index = dict(avant)
+    index["precedente"] = avant.get("active")
+    index["active"] = version
+    index["canary"] = None
+    index["canary_percent"] = 0
+    reg.ecrire_index(index)
+    apres = reg.index()
+    reg.journaliser("promotion", version=version, avant=avant, apres=apres)
+    return apres
 
 
 def rollback(registry: Registry | None = None, motif: str = "manuel") -> dict[str, Any]:
-    raise NotImplementedError("deploy.rollback — retour arrière en une opération")
+    reg = registry or Registry()
+    avant = reg.index()
+    index = dict(avant)
+    if avant.get("canary"):
+        index["canary"] = None
+        index["canary_percent"] = 0
+    elif avant.get("precedente"):
+        index["active"] = avant["precedente"]
+        index["precedente"] = None
+    else:
+        raise ErreurDeploiement("rollback impossible : aucune version précédente connue")
+    reg.ecrire_index(index)
+    apres = reg.index()
+    reg.journaliser("rollback", motif=motif, avant=avant, apres=apres)
+    return apres
 
 
 def surveiller(
@@ -96,7 +145,56 @@ def surveiller(
     latence_p95_max_ms: float = 8000,
     minimum: int = 10,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.surveiller — détection de dérive + rollback automatique")
+    reg = registry or Registry()
+    store = metriques or MetricsStore()
+    canary, _pct = reg.canary()
+    version = canary or reg.active()
+    if version is None:
+        return {"version": None, "mesures": 0, "derive": False, "motif": "", "rollback": False}
+
+    mesures = store.lire(depuis_s=fenetre_s, version=version)
+    if len(mesures) < minimum:
+        return {
+            "version": version,
+            "mesures": len(mesures),
+            "derive": False,
+            "motif": "",
+            "rollback": False,
+        }
+
+    erreurs = [m for m in mesures if m.erreur]
+    saines = [m for m in mesures if not m.erreur]
+    scores = [m.score for m in saines if m.score is not None]
+    latences = [m.latence_ms for m in saines]
+
+    motifs: list[str] = []
+    if scores and (sum(scores) / len(scores)) < score_min:
+        motifs.append("score moyen sous le seuil")
+    if (len(erreurs) / len(mesures)) > taux_erreur_max:
+        motifs.append("taux d'erreur trop élevé")
+    if _p95(latences) > latence_p95_max_ms:
+        motifs.append("latence P95 trop élevée")
+
+    derive = bool(motifs)
+    a_rollback = False
+    motif = " ; ".join(motifs)
+    if derive:
+        rollback(registry=reg, motif=motif)
+        a_rollback = True
+    return {
+        "version": version,
+        "mesures": len(mesures),
+        "derive": derive,
+        "motif": motif,
+        "rollback": a_rollback,
+    }
+
+
+def _p95(valeurs: list[float]) -> float:
+    if not valeurs:
+        return 0.0
+    tri = sorted(valeurs)
+    return tri[min(len(tri) - 1, int(round(0.95 * len(tri) + 0.5)) - 1)]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -35,12 +35,16 @@ import argparse
 import json
 import re
 import sys
+import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.api_v1 import analyser_v1
+from app.api_v2 import analyser_v2
 from app.llm_client import Bundle
-from app.telemetry import Telemetry
+from app.telemetry import Telemetry, build_default_telemetry
 from ops.registry import MOTIF_VERSION, Registry
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -102,7 +106,123 @@ def evaluer(
     sous_ensemble: list[str] | None = None,
     historique: Path | None = CHEMIN_HISTORIQUE,
 ) -> Rapport:
-    raise NotImplementedError("eval.run_eval.evaluer — le gate d'évaluation")
+    reg = registry or Registry()
+    bundle = charger_bundle(version, reg)
+    tel = telemetry or build_default_telemetry()
+    attentes = charger_attendus(attendus)
+
+    ids = sorted(attentes.keys())
+    if sous_ensemble:
+        demandee = [cid for cid in sous_ensemble if cid]
+        inconnus = [cid for cid in demandee if cid not in attentes]
+        if inconnus:
+            raise ValueError(f"contrats inconnus : {', '.join(sorted(set(inconnus)))}")
+        ids = demandee
+
+    essais = int(
+        n_essais if n_essais is not None else bundle.parametres.get("essais_eval", 1) or 1
+    )
+    essais = max(1, essais)
+
+    par_contrat: dict[str, dict[str, Any]] = {}
+    notes_globales: list[float] = []
+    latences: list[float] = []
+    couts: list[float] = []
+
+    for cid in ids:
+        texte = (contrats / f"{cid}.txt").read_text(encoding="utf-8")
+        attendu = attentes[cid]
+        clauses_attendues = set(attendu.get("clauses_attendues", []))
+        seuil_note = float(attendu.get("seuil_note", seuil))
+
+        notes_essais: list[float] = []
+        trouvees: set[str] = set()
+        latences_essais: list[float] = []
+        couts_essais: list[float] = []
+
+        for _ in range(essais):
+            avant = len(tel.metriques.lire())
+            debut = time.perf_counter()
+            if bundle.strategie == "map_reduce_clauses":
+                rep = analyser_v2(texte, client=_client(bundle), telemetry=tel)
+                types = {c.type for c in rep.clauses}
+                latence = float(rep.latence_ms)
+                cout = float(rep.cout_eur)
+            else:
+                rep = analyser_v1(texte, client=_client(bundle), telemetry=tel)
+                types = set(rep.clauses)
+                latence = (time.perf_counter() - debut) * 1000
+                cout = 0.0
+
+            mesures = tel.metriques.lire()
+            if len(mesures) > avant:
+                derniere = mesures[-1]
+                latence = float(derniere.latence_ms)
+                cout = float(derniere.cout_eur)
+
+            score = len(types & clauses_attendues) / len(clauses_attendues) if clauses_attendues else 1.0
+            notes_essais.append(score)
+            latences_essais.append(latence)
+            couts_essais.append(cout)
+            trouvees |= types & clauses_attendues
+
+        note = sum(notes_essais) / len(notes_essais)
+        manquantes = sorted(clauses_attendues - trouvees)
+        note_arrondie = round(note, 3)
+        latence_m = sum(latences_essais) / len(latences_essais)
+        cout_m = sum(couts_essais) / len(couts_essais)
+        contrat_passe = note >= seuil_note
+        par_contrat[cid] = {
+            "note": note_arrondie,
+            "seuil_note": seuil_note,
+            "passe": contrat_passe,
+            "trouvees": sorted(trouvees),
+            "manquantes": manquantes,
+            "latence_ms": round(latence_m, 1),
+            "cout_eur": round(cout_m, 6),
+        }
+        notes_globales.append(note)
+        latences.append(latence_m)
+        couts.append(cout_m)
+
+    note_globale = sum(notes_globales) / len(notes_globales) if notes_globales else 0.0
+    latence_p95 = _p95(latences)
+    cout_moyen = sum(couts) / len(couts) if couts else 0.0
+
+    motifs: list[str] = []
+    if note_globale < seuil:
+        motifs.append(f"note {note_globale:.3f} < seuil {seuil:.3f}")
+    contrats_en_echec = [cid for cid, c in par_contrat.items() if not c["passe"]]
+    if contrats_en_echec:
+        motifs.append("contrats sous leur seuil : " + ", ".join(contrats_en_echec))
+    if latence_p95 >= latence_max_ms:
+        motifs.append(f"latence P95 {latence_p95:.1f} ms >= {latence_max_ms:.1f} ms")
+    if cout_moyen >= cout_max_eur:
+        motifs.append(f"coût moyen {cout_moyen:.6f} € >= {cout_max_eur:.6f} €")
+
+    rapport = Rapport(
+        version=bundle.version,
+        date=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        essais=essais,
+        note=round(note_globale, 3),
+        par_contrat=par_contrat,
+        latence_p95_ms=round(latence_p95, 1),
+        cout_moyen_eur=round(cout_moyen, 6),
+        passe=not motifs,
+        motifs=motifs,
+        seuil=seuil,
+    )
+    if historique is not None:
+        historique.parent.mkdir(parents=True, exist_ok=True)
+        with historique.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rapport.to_dict(), ensure_ascii=False) + "\n")
+    return rapport
+
+
+def _client(bundle: Bundle):
+    from app.llm_client import LLMClient
+
+    return LLMClient(bundle)
 
 
 def afficher(rapport: Rapport) -> None:
