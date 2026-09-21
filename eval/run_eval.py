@@ -33,11 +33,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from app.llm_client import Bundle
 from app.telemetry import Telemetry
@@ -47,6 +50,65 @@ RACINE = Path(__file__).resolve().parent.parent
 DOSSIER_CONTRATS = RACINE / "eval" / "contrats"
 CHEMIN_ATTENDUS = RACINE / "eval" / "attendus.jsonl"
 CHEMIN_HISTORIQUE = RACINE / "eval" / "history.jsonl"
+CHEMIN_SEUILS_DEFAUT = RACINE / "eval" / "seuils.yaml"
+CLES_SEUILS = ("note_min", "latence_p95_max_ms", "cout_moyen_max_eur")
+
+
+# ------------------------------------------------------------------- seuils
+class ErreurSeuils(ValueError):
+    """Le fichier de seuils du gate est absent ou invalide."""
+
+
+@dataclass(frozen=True)
+class Seuils:
+    note_min: float
+    latence_p95_max_ms: float
+    cout_moyen_max_eur: float
+    motif: str = ""
+
+    def surcharger(
+        self,
+        *,
+        note_min: float | None = None,
+        latence_p95_max_ms: float | None = None,
+        cout_moyen_max_eur: float | None = None,
+    ) -> Seuils:
+        """Remplace les seuils fournis (usage local et tests) ; ``None`` = inchangé."""
+        valeurs = {
+            "note_min": note_min,
+            "latence_p95_max_ms": latence_p95_max_ms,
+            "cout_moyen_max_eur": cout_moyen_max_eur,
+        }
+        return replace(self, **{k: float(v) for k, v in valeurs.items() if v is not None})
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def chemin_seuils() -> Path:
+    """``SEUILS_PATH`` si défini, sinon ``eval/seuils.yaml`` (lu à chaque appel)."""
+    return Path(os.environ.get("SEUILS_PATH") or CHEMIN_SEUILS_DEFAUT)
+
+
+def charger_seuils(chemin: Path | str | None = None) -> Seuils:
+    chemin = Path(chemin) if chemin else chemin_seuils()
+    try:
+        data = yaml.safe_load(chemin.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ErreurSeuils(f"fichier de seuils introuvable : {chemin}") from exc
+    except yaml.YAMLError as exc:
+        raise ErreurSeuils(f"{chemin} : YAML invalide ({exc})") from exc
+    if not isinstance(data, dict):
+        raise ErreurSeuils(f"{chemin} : attendu un dictionnaire de seuils")
+    valeurs: dict[str, float] = {}
+    for cle in CLES_SEUILS:
+        if cle not in data:
+            raise ErreurSeuils(f"{chemin} : clé « {cle} » manquante")
+        valeur = data[cle]
+        if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+            raise ErreurSeuils(f"{chemin} : « {cle} » doit être un nombre, reçu {valeur!r}")
+        valeurs[cle] = float(valeur)
+    return Seuils(**valeurs, motif=str(data.get("motif") or ""))
 
 
 @dataclass
