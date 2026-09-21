@@ -223,10 +223,12 @@ def _extraire_en_parallele(
 
     pool = ThreadPoolExecutor(max_workers=parallelisme)
     futures = [pool.submit(tache, section) for section in sections]
+    erreur = False
     try:
         done, pending = wait(futures, return_when=FIRST_EXCEPTION)
         for f in done:
             if f.exception() is not None:
+                erreur = True
                 for p in pending:
                     p.cancel()
                 f.result()  # relance l'exception avec sa traceback d'origine
@@ -234,7 +236,7 @@ def _extraire_en_parallele(
     finally:
         # Annule les tâches non démarrées ; la première erreur (ErreurLLM ou
         # autre) interrompt le map, quelle que soit la section qui échoue.
-        pool.shutdown(wait=True, cancel_futures=True)
+        pool.shutdown(wait=not erreur, cancel_futures=True)
 
 
 def _extraire_trace(
