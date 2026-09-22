@@ -299,8 +299,12 @@ def deployer_canary(
     registry: Registry | None = None,
     *,
     origine: str = "manuel",
+    **details: Any,
 ) -> dict[str, Any]:
-    """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante."""
+    """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante.
+
+    ``details`` (pilotage) est recopié tel quel dans l'entrée de journal.
+    """
     if not MOTIF_VERSION.match(version):
         raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
     registry = registry or Registry()
@@ -325,14 +329,18 @@ def deployer_canary(
         return {**index, "canary": version, "canary_percent": pourcentage}
 
     return _transition(
-        registry, "canary", calcul, origine=origine, version=version, pourcentage=pourcentage
+        registry, "canary", calcul, origine=origine, version=version, pourcentage=pourcentage,
+        **details,
     )
 
 
 def promouvoir(
-    version: str, registry: Registry | None = None, *, origine: str = "manuel"
+    version: str, registry: Registry | None = None, *, origine: str = "manuel", **details: Any
 ) -> dict[str, Any]:
-    """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``."""
+    """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``.
+
+    ``details`` (pilotage) est recopié tel quel dans l'entrée de journal.
+    """
     if not MOTIF_VERSION.match(version):
         raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
     registry = registry or Registry()
@@ -354,14 +362,21 @@ def promouvoir(
             "canary_percent": 0,
         }
 
-    return _transition(registry, "promotion", calcul, origine=origine, version=version)
+    return _transition(registry, "promotion", calcul, origine=origine, version=version, **details)
 
 
 def rollback(
-    registry: Registry | None = None, motif: str = "manuel", *, origine: str = "manuel"
+    registry: Registry | None = None,
+    motif: str = "manuel",
+    *,
+    origine: str = "manuel",
+    **details: Any,
 ) -> dict[str, Any]:
     """Retour arrière en une opération, sans rebuild : retire le canary s'il y en a
-    un, sinon revient à ``precedente`` (un seul niveau)."""
+    un, sinon revient à ``precedente`` (un seul niveau).
+
+    ``details`` (pilotage) est recopié tel quel dans l'entrée de journal.
+    """
     registry = registry or Registry()
 
     def calcul(index: dict[str, Any]) -> dict[str, Any]:
@@ -372,7 +387,7 @@ def rollback(
             raise ErreurDeploiement("rien à annuler : ni canary en cours ni version précédente")
         return {**index, "active": precedente, "precedente": None}
 
-    return _transition(registry, "rollback", calcul, origine=origine, motif=motif)
+    return _transition(registry, "rollback", calcul, origine=origine, motif=motif, **details)
 
 
 def installer(
