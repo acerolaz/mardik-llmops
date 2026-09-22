@@ -36,6 +36,7 @@ import argparse
 import json
 import sys
 import time
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -170,8 +171,119 @@ def rendre_texte(r: dict[str, Any]) -> str:
     return "\n".join(lignes)
 
 
+_COULEURS = ("#4c78a8", "#f58518", "#54a24b", "#b279a2")
+
+_STYLE = """
+:root { --fond: #fafafa; --texte: #1d1d1f; --carte: #fff; --trait: #d0d0d5; --alerte: #b42318; }
+@media (prefers-color-scheme: dark) {
+  :root { --fond: #16161a; --texte: #ececf1; --carte: #202027; --trait: #3a3a44; }
+}
+body { font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 16px;
+       background: var(--fond); color: var(--texte); }
+h1 { font-size: 18px; } h2 { font-size: 15px; margin-top: 24px; }
+table { border-collapse: collapse; width: 100%; background: var(--carte); }
+th, td { border-bottom: 1px solid var(--trait); padding: 6px 8px; text-align: left; }
+svg { display: block; } svg.jauge { width: 100%; max-width: 600px; height: 20px; }
+svg.histo, svg.spark { width: 120px; height: 36px; }
+svg.histo rect { fill: #4c78a8; } svg.spark polyline { fill: none; stroke: #f58518; }
+.alerte { color: var(--alerte); font-weight: 600; } .vide { opacity: .6; }
+"""
+
+
+def _svg_jauge(par_version: dict[str, dict[str, Any]]) -> str:
+    x, parts = 0.0, []
+    for i, (version, s) in enumerate(par_version.items()):
+        largeur = s["trafic_pct"] * 3
+        parts.append(
+            f'<rect x="{x:.1f}" y="0" width="{largeur:.1f}" height="20" '
+            f'fill="{_COULEURS[i % len(_COULEURS)]}"><title>{escape(version)} '
+            f'{s["trafic_pct"]} %</title></rect>'
+        )
+        x += largeur
+    return (f'<svg class="jauge" viewBox="0 0 300 20" role="img" '
+            f'aria-label="part de trafic par version">{"".join(parts)}</svg>')
+
+
+def _svg_histogramme(comptes: list[int], largeur: int = 120, hauteur: int = 36) -> str:
+    haut = max(comptes) or 1
+    pas = largeur / len(comptes)
+    rects = "".join(
+        f'<rect x="{i * pas:.1f}" y="{hauteur - c / haut * hauteur:.1f}" '
+        f'width="{pas - 1:.1f}" height="{c / haut * hauteur:.1f}"/>'
+        for i, c in enumerate(comptes)
+    )
+    return (f'<svg class="histo" viewBox="0 0 {largeur} {hauteur}" role="img" '
+            f'aria-label="distribution du score, de 0 à 1">{rects}</svg>')
+
+
+def _svg_sparkline(valeurs: list[float | None], largeur: int = 120, hauteur: int = 36) -> str:
+    points = [v for v in valeurs if v is not None]
+    if len(points) < 2:
+        return '<span class="vide">—</span>'
+    bas, haut = min(points), max(points)
+    etendue = (haut - bas) or 1
+    pas = largeur / (len(points) - 1)
+    coords = " ".join(
+        f"{i * pas:.1f},{hauteur - (v - bas) / etendue * hauteur:.1f}"
+        for i, v in enumerate(points)
+    )
+    return (f'<svg class="spark" viewBox="0 0 {largeur} {hauteur}">'
+            f'<polyline points="{coords}"/></svg>')
+
+
 def rendre_html(r: dict[str, Any]) -> str:
-    raise NotImplementedError("dashboard.rendre_html — page HTML auto-rafraîchie")
+    lignes_versions = []
+    for version, s in r["par_version"].items():
+        serie = s["serie_minute"]
+        lignes_versions.append(
+            "<tr>"
+            f"<td>{escape(version)}</td><td>{s['trafic_pct']} %</td>"
+            f"<td>{_ms(s['latence_p50_ms'])} / {_ms(s['latence_p95_ms'])}</td>"
+            f"<td>{s['taux_erreur'] * 100:.1f} %</td>"
+            f"<td>{_score(s['score_moyen'])} (P10 {_score(s['score_p10'])})</td>"
+            f"<td>{_svg_histogramme(s['histogramme_score'])}</td>"
+            f"<td>{_svg_sparkline([p['latence_p95_ms'] for p in serie])}</td>"
+            f"<td>{_svg_sparkline([p['taux_erreur'] for p in serie])}</td>"
+            "</tr>"
+        )
+    if lignes_versions:
+        tableau = (
+            "<table><tr><th>Version</th><th>Trafic</th><th>P50 / P95</th><th>Erreurs</th>"
+            "<th>Score moyen</th><th>Distribution du score</th><th>P95 / min</th>"
+            "<th>Erreurs / min</th></tr>" + "".join(lignes_versions) + "</table>"
+        )
+    else:
+        tableau = '<p class="vide">aucun trafic dans la fenêtre</p>'
+    p = r.get("palier")
+    palier = (
+        f"<p>palier : {escape(p['version'])} à {p['pourcentage']} % depuis "
+        f"{p['depuis_s'] if p['depuis_s'] is not None else '?'} s "
+        f"({p['requetes']}/{p['requetes_min']} requêtes)</p>"
+        if p else "<p>palier : aucun canary en cours</p>"
+    )
+    alertes = "".join(f'<li class="alerte">{escape(a)}</li>' for a in r.get("alertes", []))
+    alertes = alertes or '<li class="vide">aucune</li>'
+    journal = "".join(
+        f"<tr><td>{escape(str(e.get('date', '')))}</td><td>{escape(str(e.get('evenement')))}"
+        f"</td><td>{escape(str(e.get('origine', '-')))}</td>"
+        f"<td>{escape(str(e.get('resume') or e.get('motif') or ''))}</td></tr>"
+        for e in reversed(r.get("journal", []))
+    )
+    return (
+        "<!doctype html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
+        '<meta http-equiv="refresh" content="5">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>Pilotage Mardik</title><style>{_STYLE}</style></head><body>"
+        f"<h1>Pilotage Mardik — fenêtre {r['fenetre_s']:.0f} s, {r['total']} requêtes</h1>"
+        f"<h2>Part de trafic</h2>{_svg_jauge(r['par_version'])}"
+        f"<h2>Par version</h2>{tableau}"
+        f"<h2>Palier canary</h2>{palier}"
+        f"<h2>Alertes</h2><ul>{alertes}</ul>"
+        f"<h2>Candidats à verser</h2><p>{r.get('candidats', 0)}</p>"
+        "<h2>Journal de pilotage</h2><table><tr><th>Date</th><th>Événement</th>"
+        f"<th>Origine</th><th>Résumé</th></tr>{journal}</table>"
+        "</body></html>"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

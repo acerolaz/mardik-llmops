@@ -6,7 +6,7 @@ import time
 
 from app.llm_client import Bundle
 from app.telemetry import Mesure
-from ops.dashboard import rendre_texte, resume
+from ops.dashboard import rendre_html, rendre_texte, resume
 
 
 def _mesures(metriques, version, n, *, score=0.9, ts=None, latence=2000.0):
@@ -65,3 +65,23 @@ def test_rendre_texte(metriques, registry):
     texte = rendre_texte(resume(metriques, registry=registry))
     assert "v2.0.0" in texte and "palier : v2.0.0 à 10 %" in texte
     assert "alertes :" in texte and "journal :" in texte
+
+
+def test_rendre_html(metriques, registry):
+    _canary(registry)
+    _mesures(metriques, "v1.0.0", 20, score=None)
+    _mesures(metriques, "v2.0.0", 12, score=0.72)
+    registry.journaliser("alerte", origine="auto", version="v2.0.0",
+                         resume="score <b>bas</b>")
+    page = rendre_html(resume(metriques, registry=registry))
+    assert page.startswith("<!doctype html>")
+    assert '<meta http-equiv="refresh" content="5">' in page
+    assert page.count("<svg") >= 3            # jauge + histogrammes
+    assert "v1.0.0" in page and "v2.0.0" in page
+    assert "score &lt;b&gt;bas&lt;/b&gt;" in page and "<b>bas</b>" not in page
+    assert "palier" in page
+
+
+def test_rendre_html_sans_trafic(metriques, registry, tmp_path):
+    page = rendre_html(resume(metriques, registry=registry, candidats=tmp_path / "x"))
+    assert "aucun trafic dans la fenêtre" in page
