@@ -1,6 +1,7 @@
 """Tests unitaires — registre (écriture atomique) et transitions de déploiement."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -93,6 +94,18 @@ def test_canary_refuse_si_un_autre_canary_est_en_cours(registry):
         deployer_canary("v2.0.1", 10, registry)
 
 
+def test_canary_refuse_sans_version_active(tmp_path):
+    registry = Registry(tmp_path / "vide")
+    _livrer(registry)
+    with pytest.raises(ErreurDeploiement, match="aucune version active : promouvoir d'abord"):
+        deployer_canary("v2.0.0", 10, registry)
+
+
+def test_canary_version_invalide(registry):
+    with pytest.raises(ErreurDeploiement, match="version invalide : '2.0.0' \\(attendu vX.Y.Z\\)"):
+        deployer_canary("2.0.0", 10, registry)
+
+
 # --------------------------------------------------------------- promotion
 def test_promotion_du_canary(registry):
     _livrer(registry)
@@ -123,6 +136,11 @@ def test_promotion_refusee_par_dessus_un_autre_canary(registry):
     deployer_canary("v2.0.0", 10, registry)
     with pytest.raises(ErreurDeploiement, match="canary v2.0.0 en cours"):
         promouvoir("v2.0.1", registry)
+
+
+def test_promotion_version_invalide(registry):
+    with pytest.raises(ErreurDeploiement, match="version invalide : '2.0.0' \\(attendu vX.Y.Z\\)"):
+        promouvoir("2.0.0", registry)
 
 
 # ---------------------------------------------------------------- rollback
@@ -197,6 +215,13 @@ def test_installer_sans_manifeste(registry, tmp_path):
 def test_installer_version_incoherente(registry, tmp_path):
     with pytest.raises(ErreurDeploiement, match="décrit 'v2.0.0', pas v2.0.1"):
         installer("v2.0.1", _artefact(tmp_path), registry)
+
+
+def test_installer_sans_config_yaml(registry, tmp_path):
+    dossier = _artefact(tmp_path)
+    (dossier / "config.yaml").unlink()
+    with pytest.raises(ErreurDeploiement, match=f"config.yaml absent de {re.escape(str(dossier))}"):
+        installer("v2.0.0", dossier, registry)
 
 
 def test_installer_depuis_fichier_refuse(registry, tmp_path):

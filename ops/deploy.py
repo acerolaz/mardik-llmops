@@ -280,7 +280,7 @@ def _transition(
             raise ErreurDeploiement(str(exc)) from exc
         registry.ecrire_index(apres)
         registry.journaliser(evenement, avant=avant, apres=apres, origine=origine, **details)
-    return registry.index()
+        return registry.index()
 
 
 def _pourcentage_par_defaut() -> int:
@@ -301,11 +301,15 @@ def deployer_canary(
     origine: str = "manuel",
 ) -> dict[str, Any]:
     """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante."""
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
     registry = registry or Registry()
     if pourcentage is None:
         pourcentage = _pourcentage_par_defaut()
 
     def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        if index.get("active") is None:
+            raise ErreurDeploiement("aucune version active : promouvoir d'abord")
         registry.manifest(version)
         if index.get("active") == version:
             raise ErreurDeploiement(f"{version} est déjà la version active")
@@ -329,6 +333,8 @@ def promouvoir(
     version: str, registry: Registry | None = None, *, origine: str = "manuel"
 ) -> dict[str, Any]:
     """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``."""
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
     registry = registry or Registry()
 
     def calcul(index: dict[str, Any]) -> dict[str, Any]:
@@ -385,8 +391,6 @@ def installer(
     chemin = depuis / "manifest.json"
     try:
         manifeste = json.loads(chemin.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise ErreurDeploiement(f"manifeste introuvable : {chemin}") from exc
     except OSError as exc:
         raise ErreurDeploiement(f"manifeste introuvable : {chemin}") from exc
     except json.JSONDecodeError as exc:
@@ -394,6 +398,8 @@ def installer(
     if not isinstance(manifeste, dict) or manifeste.get("version") != version:
         decrit = manifeste.get("version") if isinstance(manifeste, dict) else None
         raise ErreurDeploiement(f"le manifeste de {depuis} décrit {decrit!r}, pas {version}")
+    if not (depuis / "config.yaml").exists():
+        raise ErreurDeploiement(f"config.yaml absent de {depuis}")
 
     with _verrou(registry):
         if version in registry.versions():
@@ -510,6 +516,9 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(args.intervalle)
     except ErreurDeploiement as exc:
         print(f"REFUSÉ : {exc}", file=sys.stderr)
+        return 1
+    except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
+        print(f"ÉCHEC : {exc}", file=sys.stderr)
         return 1
     return 0
 
