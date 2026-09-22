@@ -3,7 +3,9 @@
 * ``/v1`` est branché et fonctionnel (le contrat historique) ;
 * ``/v2`` est implémenté (``DocumentTropLong`` → **413**) ;
 * ``/analyse`` (gateway) route entre les versions livrées du registre ; une
-  ``ErreurRoutage`` (aucune version active, stratégie non routable) → **503**.
+  ``ErreurRoutage`` (aucune version active, stratégie non routable) → **503** ;
+* ``/pilotage/resume`` expose le résumé du tableau de bord (``ops.dashboard``)
+  à l'interface web ; ``/`` et ``/pilotage`` servent ses deux pages.
 Un module encore en chantier lève ``NotImplementedError`` → **501** explicite —
 jamais un 500 muet.
 """
@@ -14,7 +16,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app import api_v1, api_v2, gateway
+from app import api_v1, api_v2, gateway, pilotage
 from app.pipeline import DocumentTropLong
 from app.routage import ErreurRoutage
 from app.telemetry import build_default_telemetry
@@ -27,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v1.router)
     app.include_router(api_v2.router)
     app.include_router(gateway.router)
+    app.include_router(pilotage.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:
