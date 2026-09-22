@@ -87,7 +87,7 @@ def resoudre(registry: Registry, tirage: float) -> Cible:
     )
     try:
         bundle = registry.bundle(version)
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, yaml.YAMLError, ValueError, TypeError, AttributeError) as exc:
         raise BundleIllisible(version, exc) from exc
     moteur = MOTEURS_HTTP.get(bundle.strategie)
     if moteur is None:
