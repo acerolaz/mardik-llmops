@@ -106,9 +106,13 @@ def chemin_seuils() -> Path:
 def charger_seuils(chemin: Path | str | None = None) -> Seuils:
     chemin = Path(chemin) if chemin else chemin_seuils()
     try:
-        data = yaml.safe_load(chemin.read_text(encoding="utf-8"))
+        contenu = chemin.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise ErreurSeuils(f"fichier de seuils introuvable : {chemin}") from exc
+    except OSError as exc:
+        raise ErreurSeuils(f"fichier de seuils illisible : {chemin} ({exc})") from exc
+    try:
+        data = yaml.safe_load(contenu)
     except yaml.YAMLError as exc:
         raise ErreurSeuils(f"{chemin} : YAML invalide ({exc})") from exc
     if not isinstance(data, dict):
