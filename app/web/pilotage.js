@@ -1,5 +1,5 @@
 import {
-  couleurVersion, esc, fmtDuree, fmtEur, fmtMs, fmtPct, fmtScore, icone, initTheme,
+  couleurVersion, esc, fmtDuree, fmtEur, fmtMs, fmtPct, fmtScore, icone, initTheme, peindre,
   rendrePalier, rendreTrafic, surveillerResume,
 } from "/static/commun.js";
 
@@ -64,23 +64,23 @@ function ligneJournal(e) {
 
 function rendre(r) {
   $("#fenetre").textContent = `fenêtre ${fmtDuree(r.fenetre_s)} · ${r.total} requête(s)`;
-  $("#alertes").innerHTML = r.alertes.length
+  peindre($("#alertes"), r.alertes.length
     ? `<ul class="alertes">${r.alertes.map((a) => `<li>${icone("danger")}${esc(a)}</li>`).join("")}</ul>`
-    : `<p class="statut ok">${icone("ok")}Aucune alerte</p>`;
-  $("#trafic").innerHTML = rendreTrafic(r.par_version);
-  $("#palier").innerHTML = rendrePalier(r.palier);
+    : `<p class="statut ok">${icone("ok")}Aucune alerte</p>`);
+  peindre($("#trafic"), rendreTrafic(r.par_version));
+  peindre($("#palier"), rendrePalier(r.palier));
   $("#candidats").textContent = String(r.candidats);
   const versions = Object.entries(r.par_version);
-  $("#versions").innerHTML = versions.length
+  peindre($("#versions"), versions.length
     ? versions.map(carteVersion).join("")
-    : '<p class="carte vide">Aucun trafic dans la fenêtre — lancez <code>make traffic</code> pour alimenter le tableau de bord.</p>';
-  $("#journal").innerHTML = r.journal.length
+    : '<p class="carte vide">Aucun trafic dans la fenêtre — lancez <code>make traffic</code> pour alimenter le tableau de bord.</p>');
+  peindre($("#journal"), r.journal.length
     ? r.journal.slice().reverse().map(ligneJournal).join("")
-    : '<tr><td colspan="4" class="vide">Journal vide.</td></tr>';
+    : '<tr><td colspan="4" class="vide">Journal vide.</td></tr>');
 }
 
 function indisponible() {
-  $("#alertes").innerHTML = `<p class="indispo">${icone("warn")}Résumé de pilotage indisponible — nouvel essai dans 5 s.</p>`;
+  peindre($("#alertes"), `<p class="indispo">${icone("warn")}Résumé de pilotage indisponible — nouvel essai dans 5 s.</p>`);
 }
 
 $("#logo").innerHTML = icone("scale");

@@ -1,4 +1,4 @@
-.PHONY: install up down serve proxy dashboard pilote calibrer candidats verser etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
+.PHONY: install up down serve proxy dashboard pilote calibrer candidats verser etat test test-unit test-integration test-acceptance test-web eval traffic ci fixtures lint fmt clean
 
 MODE ?= normal
 VERSION ?= v2
@@ -48,6 +48,9 @@ test-unit:          ## pipeline v2, gate, versions, routage, transitions, workfl
 
 test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard : verts
 	MOCK=on uv run pytest -q tests/integration
+
+test-web:           ## module JS partagé de l'interface (Node, sans dépendance)
+	node --test "tests/web/*.test.mjs"
 
 test-acceptance:    ## les 10 tests du brief : tous verts
 	MOCK=on uv run pytest -v tests/acceptance

@@ -1,6 +1,6 @@
 import {
-  esc, fmtEur, fmtMs, fmtScore, icone, initTheme, rendreP95, rendrePalier, rendreTrafic,
-  surveillerResume,
+  arrondi2, esc, fmtEur, fmtMs, fmtScore, icone, initTheme, peindre, rendreP95, rendrePalier,
+  rendreTrafic, surveillerResume,
 } from "/static/commun.js";
 
 const LIMITE_V1 = 16000;      // models/v1/config.yaml : contexte_max_caracteres (au-delà, v1 coupe)
@@ -16,13 +16,13 @@ surveillerResume({
   boutonPause: $("#pause"),
   horodatage: $("#maj"),
   onData(r) {
-    $("#kpi-p95").innerHTML = rendreP95(r.par_version);
-    $("#kpi-canary").innerHTML = rendreTrafic(r.par_version) + rendrePalier(r.palier);
+    peindre($("#kpi-p95"), rendreP95(r.par_version));
+    peindre($("#kpi-canary"), rendreTrafic(r.par_version) + rendrePalier(r.palier));
   },
   onErreur() {
     const m = `<p class="indispo">${icone("warn")}Indicateurs indisponibles — nouvel essai dans 5 s.</p>`;
-    $("#kpi-p95").innerHTML = m;
-    $("#kpi-canary").innerHTML = m;
+    peindre($("#kpi-p95"), m);
+    peindre($("#kpi-canary"), m);
   },
 });
 
@@ -84,7 +84,6 @@ const colonne = (id, classe, titre) =>
      <h3 id="t-${id}">${titre}</h3><div id="c-${id}" aria-live="polite" aria-busy="true">${SQUELETTE}</div>
    </section>`;
 const badgeGateway = (servi) => (servi ? `<p class="badge info">servi par ${esc(servi)}</p>` : "");
-const arrondi2 = (v) => Math.round(v * 100) / 100;   // même arrondi que construire_warnings
 
 function rendreV1({ corps, duree, servi }) {
   const etat = corps.tronque

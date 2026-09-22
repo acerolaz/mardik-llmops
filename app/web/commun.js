@@ -10,7 +10,9 @@ export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ENTITES[c])
 
 const nombre = (d) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const fmtMs = (v) => (v == null ? "—" : `${nombre(0).format(v)} ms`);
-export const fmtScore = (v) => (v == null ? "—" : nombre(2).format(v));
+// Arrondi comme Python round(v, 2) : toFixed part de la valeur binaire exacte (0.595 → 0.59).
+export const arrondi2 = (v) => Number(v.toFixed(2));
+export const fmtScore = (v) => (v == null ? "—" : nombre(2).format(arrondi2(v)));
 export const fmtPct = (v) => (v == null ? "—" : `${nombre(1).format(v)} %`);
 export const fmtEur = (v) => (v == null ? "—" : `${nombre(3).format(v)} €`);
 export const fmtDuree = (s) => {
@@ -32,6 +34,15 @@ const TRACES = {
 };
 export const icone = (nom) =>
   `<svg class="icone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRACES[nom]}</svg>`;
+
+// Réécrit une zone rafraîchie seulement si son HTML change : une zone aria-live
+// réécrite à l'identique est réannoncée par les lecteurs d'écran à chaque tour.
+const DERNIER = new WeakMap();
+export function peindre(el, html) {
+  if (DERNIER.get(el) === html) return;
+  DERNIER.set(el, html);
+  el.innerHTML = html;
+}
 
 export const couleurVersion = (v) => (String(v).startsWith("v1") ? "v1" : "v2");
 
