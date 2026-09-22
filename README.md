@@ -14,8 +14,8 @@ Lisez d'abord `docs/besoin_client.md`. Puis `docs/schema_remediation.md`.
 
 - **`app/api_v1.py` est intouchable.** Le client historique doit continuer
   de fonctionner tel quel, à chaque commit. C'était le seul test vert au
-  départ ; il l'est resté à chaque sous-projet, et 8 tests d'acceptance sur
-  10 sont verts depuis le sous-projet 3.
+  départ ; il l'est resté à chaque sous-projet, et les 10 tests d'acceptance
+  sont verts depuis le sous-projet 4.
 - **Une version du modèle est un bundle de configuration.** Voyez
   `models/v1/config.yaml` : modèle de base + prompt + paramètres + schéma de
   sortie + stratégie. La v2 (`models/v2/config.yaml`) est le même client LLM
@@ -40,7 +40,7 @@ Lisez d'abord `docs/besoin_client.md`. Puis `docs/schema_remediation.md`.
 make install                 # uv sync
 cp .env.example .env         # choisir le fournisseur : ollama (gratuit) ou azure (clé API)
 ollama pull llama3.2:3b      # si LLM_PROVIDER=ollama
-make up                      # app :8000, proxy de dérive :8080, dashboard :8501
+make up                      # app :8000, proxy de dérive :8080, dashboard :8501, pilote
 ```
 
 Sans docker : `make proxy` dans un terminal, `make serve` dans un autre.
@@ -69,16 +69,19 @@ curl -si localhost:8000/analyse -H 'content-type: application/json' \
 
 | Commande | Quoi |
 |---|---|
-| `make up` / `make down` | app + proxy + dashboard (docker compose) |
+| `make up` / `make down` | app + proxy + dashboard + pilote (docker compose) |
 | `make test` | tout, en `MOCK=on` |
-| `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement et des workflows (verts) |
-| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway et de la CLI de déploiement (verts) |
+| `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement, des workflows, des signaux, du pilotage, des seuils et de l'anonymisation (verts) |
+| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway, de la CLI de déploiement, de la surveillance, du pilote, de la capture, de l'enrichissement et du dashboard (verts) |
 | `make test-acceptance` | les 10 tests du brief (verts) |
 | `make etat` | répartition courante du trafic vue par la gateway (`APP_URL`, défaut `http://localhost:8000`) |
 | `make eval VERSION=v2` | le gate d'évaluation sur le **vrai** modèle (`ARGS="--essais 3"`) |
 | `make traffic MODE=derive-score` | trafic sur la gateway + dérive commandée (`normal`, `derive-latence`, `erreurs`) |
 | `make dashboard` | tableau de bord (texte) ; `DASH=serve` pour la page HTML |
 | `make pilote` | boucle du pilote : surveillance, rollback automatique, promotion canary |
+| `make calibrer VERSION=v2.0.0` | propose des seuils (moyenne − k·σ) sur la production ; n'écrit rien |
+| `make candidats` | cas v2 à faible confiance capturés, en attente de versement |
+| `make verser ID=… CLAUSES=a,b` | verse un candidat relu dans le jeu d'évaluation (`eval/contrats/`, `attendus.jsonl`) |
 | `make ci` | l'équivalent local du workflow GitHub (le gate MOCK passe avant l'acceptance) |
 | `make fixtures` | (ré)enregistre les fixtures `MOCK` avec le vrai modèle |
 
@@ -106,10 +109,12 @@ ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier, i
               promotion, rollback FAIT — SP3 ; surveiller, piloter FAIT — SP4], dashboard.py, pilotage.py,
               signaux.py, seuils.py [FAIT — SP4]
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
-tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows),
-              integration/ (v1 + v2 + gate + publication + gateway + cli_deploy),
+tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows,
+              signaux, pilotage, seuils_pilotage, calibrer, resume_metier, anonymisation, verrou_capture),
+              integration/ (v1 + v2 + gate + publication + gateway + cli_deploy + surveiller + piloter
+              + capture + enrichir + dashboard + details_journal),
               acceptance/ (10 tests du brief : verts)
-docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [FAIT — SP3],
+docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [§4-§7 FAIT — SP3, SP4],
               superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication, routage/déploiement,
               observabilité)
 .github/      workflows/ci.yml — gates (MOCK + release), build, publication, canary (installation + 10 %) ;
@@ -132,7 +137,8 @@ docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, e
    `docs/exploitation.md`.
 
 Démo de fin : `make traffic MODE=derive-score` en live → dérive vue au tableau
-de bord → rollback → entrée au journal.
+de bord → rollback automatique par le pilote → entrée au journal. Procédure des
+trois boucles (rollback, promotion, enrichissement) : `docs/exploitation.md` §7.
 
 ## Coût et non-déterminisme
 
@@ -385,3 +391,65 @@ pas : concevez avec.
 - Workflows vérifiés par `tests/unit/test_workflows.py` seulement : à valider
   par `actionlint` et par un premier run réel (canary 10 %, promotion,
   rollback) sur le runner.
+
+### Non publié — observabilité et boucles de rétroaction (sous-projet 4)
+
+*2026-09-22 — branche `feature/observabilite`. Spec :
+`docs/superpowers/specs/2026-09-22-observabilite-design.md` · Plans :
+`docs/superpowers/plans/2026-09-22-observabilite.md`,
+`docs/superpowers/plans/2026-09-22-corrections-observabilite.md`.*
+
+**Ajouté**
+
+- **Seuils de pilotage** (`ops/seuils_pilotage.yaml`, `ops/seuils.py`) : config
+  as code, même convention que `eval/seuils.yaml` (`motif` obligatoire),
+  chargement strict qui nomme la clé fautive (`fenetre_s`, `minimum`,
+  `intervalle_s` strictement positifs). `calibrer` propose `moyenne − k·σ` à
+  partir de la production, sans rien écrire.
+- **Décisions pures** (`ops/signaux.py`, `ops/pilotage.py`) : agrégats par
+  version (P50/P95/P10, erreurs, score, coût), détection de dérive (seuil dur,
+  marge, échantillon minimal), décision de palier canary (durée, volume, écart
+  d'erreurs, P95, score moyen, P10), résumés en langage métier du journal.
+- **Pilote** (`ops/deploy.py surveiller | piloter`, service docker `pilote`,
+  `make pilote`) : dérive critique → rollback automatique tracé
+  (`origine: auto`), marge → alerte, promotion canary 10 → 50 → 100 % quand
+  les métriques tiennent ; refus, changements de seuils et canary sans début
+  de palier journalisés une fois par fenêtre. Un seuil invalide au démarrage
+  l'arrête (code 1) ; en cours de route, il garde les derniers seuils valides
+  et survit aux incidents d'I/O transitoires.
+- **Capture** (`app/capture.py`) : les analyses v2 à faible confiance
+  (`/v2/analyse` et la gateway) sont anonymisées (e-mail, IBAN, téléphone,
+  SIRET, personnes) et ajoutées à `eval/candidats.jsonl` en tâche de fond,
+  sous verrou, sans jamais affecter la réponse client.
+- **Enrichissement** (`eval/enrichir.py`, `make candidats`, `make verser`) :
+  versement humain d'un candidat relu dans le jeu d'évaluation ; le contrat est
+  publié en dernier, par renommage atomique.
+- **Tableau de bord** (`ops/dashboard.py`) : par version, palier en cours
+  (compté comme le pilote), alertes, candidats à verser, 5 dernières entrées du
+  journal ; rendu texte et page HTML auto-rafraîchie. Une source illisible
+  donne une alerte, jamais un 500.
+- **`docs/exploitation.md`** §6 (surveillance, seuils, calibration,
+  enrichissement, garde-fous du pilote) et §7 (preuve d'exécution des trois
+  boucles).
+- **Makefile** : cibles `pilote`, `calibrer`, `candidats`, `verser`.
+- **Tests** : 56 tests unitaires et 45 tests d'intégration. Les 10 tests
+  d'acceptance sont verts, dont `test_dashboard_par_version` et
+  `test_journal_derive_et_rollback_automatique`. `MOCK=on uv run pytest -q` :
+  328 passés.
+
+**Modifié**
+
+- `app/api_v2.py`, `app/gateway.py` : capture branchée en `BackgroundTasks`.
+- `docker-compose.yml` : service `pilote` ; le dashboard monte `./eval`.
+- `promotion.yml` : devient la voie manuelle, le pilote promeut seul.
+
+**Inchangé** : `app/api_v1.py`, `ops/registry/`, `app/llm_client.py`,
+`app/telemetry.py`, le moteur v2, le gate.
+
+**Reste à faire**
+
+- Remettre `promotion.duree_min_s: 1800` et `requetes_min: 500` (valeurs de
+  production) après la démo, avec un nouveau `motif`.
+- `ops/registry/__init__.py::journal()` ne tolère pas une ligne corrompue
+  (fichier fourni, hors périmètre) : le pilote survit et le dashboard alerte.
+- Premier run réel du service `pilote` sur l'environnement de prod.
