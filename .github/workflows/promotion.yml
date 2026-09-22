@@ -1,0 +1,51 @@
+# Promotion du canary : 50 % du trafic, puis 100 % (la version devient active).
+# Décision humaine dans le sous-projet 3 ; le sous-projet 4 la branchera sur les
+# métriques. S'exécute sur le runner auto-hébergé de prod, jamais sur une PR.
+
+name: promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version en canary (vX.Y.Z)"
+        required: true
+        type: string
+      etape:
+        description: "50 : canary à 50 % ; 100 : promotion totale"
+        required: true
+        type: choice
+        options: ["50", "100"]
+
+jobs:
+  promotion:
+    runs-on: [self-hosted, mardik]
+    environment: production
+    concurrency:
+      group: mardik-production
+      cancel-in-progress: false
+    env:
+      REGISTRY_PATH: ${{ vars.MARDIK_REGISTRY_PATH }}
+      MARDIK_APP_URL: ${{ vars.MARDIK_APP_URL || 'http://localhost:8000' }}
+      VERSION: ${{ inputs.version }}
+      ETAPE: ${{ inputs.etape }}
+      ORIGINE: ci:${{ github.actor }}
+    steps:
+      - name: Préconditions
+        run: |
+          if [ -z "$REGISTRY_PATH" ]; then echo "::error::variable MARDIK_REGISTRY_PATH absente"; exit 1; fi
+          if [ ! -f "$REGISTRY_PATH/index.json" ]; then echo "::error::pas d'index.json dans MARDIK_REGISTRY_PATH ($REGISTRY_PATH)"; exit 1; fi
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - name: Étape de promotion
+        run: |
+          if [ "$ETAPE" = "100" ]; then
+            uv run python -m ops.deploy promouvoir "$VERSION" --origine "$ORIGINE"
+          else
+            uv run python -m ops.deploy canary "$VERSION" --pourcentage 50 --origine "$ORIGINE"
+          fi
+      - name: État vu par la gateway
+        run: curl -sf "$MARDIK_APP_URL/gateway/etat"

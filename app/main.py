@@ -1,11 +1,11 @@
 """Application FastAPI — [FOURNI].
 
 * ``/v1`` est branché et fonctionnel (le contrat historique) ;
-* ``/v2`` est implémenté (``DocumentTropLong`` → **413** via le gestionnaire
-  d'exception ci-dessous) ;
-* ``/analyse`` (gateway) reste branché sur un stub : tant qu'un module lève
-  ``NotImplementedError``, la route répond **501** avec le nom du chantier
-  restant — jamais un 500 muet.
+* ``/v2`` est implémenté (``DocumentTropLong`` → **413**) ;
+* ``/analyse`` (gateway) route entre les versions livrées du registre ; une
+  ``ErreurRoutage`` (aucune version active, stratégie non routable) → **503**.
+Un module encore en chantier lève ``NotImplementedError`` → **501** explicite —
+jamais un 500 muet.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app import api_v1, api_v2, gateway
 from app.pipeline import DocumentTropLong
+from app.routage import ErreurRoutage
 from app.telemetry import build_default_telemetry
 
 
@@ -45,6 +46,10 @@ def create_app() -> FastAPI:
     @app.exception_handler(DocumentTropLong)
     async def _document_trop_long(request: Request, exc: DocumentTropLong) -> JSONResponse:
         return JSONResponse(status_code=413, content={"detail": str(exc)})
+
+    @app.exception_handler(ErreurRoutage)
+    async def _routage_impossible(request: Request, exc: ErreurRoutage) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     return app
 

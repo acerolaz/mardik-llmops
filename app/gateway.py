@@ -1,32 +1,30 @@
-"""Gateway : routeur canary entre les versions livrées. [STUB]
+"""Gateway : routeur canary entre les versions livrées.
 
-Contrat attendu :
+    POST /analyse  {"texte": "..."}   → réponse de la version choisie,
+                                        + en-tête ``X-Mardik-Version``
+    GET  /gateway/etat                → {"active": "v1.0.0", "canary": "v2.0.0",
+                                         "canary_percent": 10}
 
-    POST /analyse  {"texte": "..."}         → réponse de la version choisie,
-                                              + en-tête ``X-Mardik-Version``
-    GET  /gateway/etat                      → {"active": "v1.0.0", "canary": "v2.0.0",
-                                               "canary_percent": 10}
-
-    choisir_version(active, canary, canary_percent, tirage) -> str
-        fonction pure : ``tirage`` ∈ [0, 100[ ; renvoie ``canary`` si un canary
-        est déployé et ``tirage < canary_percent``, sinon ``active``.
-
-Règles :
-* la gateway lit ``ops/registry/index.json`` (via ``Registry``) à **chaque**
-  requête : une promotion ou un rollback doit prendre effet sans redémarrage ;
-* ``CANARY_PERCENT`` dans ``.env`` force le pourcentage (sinon celui de
-  l'index) — pratique pour la démo ;
-* le bundle de chaque version vient du registre (``registry.bundle(version)``),
-  pas de ``models/`` : on sert ce qui a été livré, pas ce qui est en chantier ;
-* la stratégie du bundle décide du moteur : ``monolithique`` → ``analyser_v1``,
-  ``map_reduce_clauses`` → ``analyser_v2`` ;
-* les erreurs restent explicites (422 / 503), comme sur ``/v1`` et ``/v2``.
+Route mince : le choix de la version, du bundle livré et du moteur est dans
+``app.routage``. L'index du registre est relu à chaque requête : une promotion
+ou un rollback prend effet sans redémarrage. ``CANARY_PERCENT`` n'est que la
+valeur par défaut de ``ops.deploy.deployer_canary`` ; la gateway suit l'index.
+Erreurs explicites : 422 (corps), 413 (document trop long, moteur v2),
+503 (fournisseur LLM, aucune version routable).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response
+import random
+from collections.abc import Callable
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from app import routage
+from app.api_v1 import ReponseAnalyseV1
+from app.api_v2 import ReponseAnalyseV2
+from app.llm_client import Bundle, ErreurLLM, LLMClient
+from app.routage import choisir_version as choisir_version
 from app.telemetry import Telemetry, build_default_telemetry
 from ops.registry import Registry
 
@@ -38,10 +36,10 @@ class RequeteAnalyse(BaseModel):
     contrat_id: str | None = None
 
 
-def choisir_version(
-    active: str, canary: str | None, canary_percent: int, tirage: float
-) -> str:
-    raise NotImplementedError("gateway.choisir_version — fonction pure de routage canary")
+class EtatGateway(BaseModel):
+    active: str | None
+    canary: str | None
+    canary_percent: int
 
 
 def get_registry() -> Registry:
@@ -52,16 +50,40 @@ def get_telemetry() -> Telemetry:
     return build_default_telemetry()
 
 
-@router.get("/gateway/etat")
-def etat(registry: Registry = Depends(get_registry)) -> dict:
-    raise NotImplementedError("gateway.etat — GET /gateway/etat")
+def get_tirage() -> float:
+    return random.uniform(0, 100)
 
 
-@router.post("/analyse")
+def get_fabrique_client() -> Callable[[Bundle], LLMClient]:
+    return LLMClient
+
+
+@router.get("/gateway/etat", response_model=EtatGateway)
+def etat(registry: Registry = Depends(get_registry)) -> EtatGateway:
+    index = registry.index()
+    return EtatGateway(
+        active=index.get("active"),
+        canary=index.get("canary"),
+        canary_percent=int(index.get("canary_percent") or 0),
+    )
+
+
+@router.post("/analyse", response_model=ReponseAnalyseV1 | ReponseAnalyseV2)
 def analyse(
     requete: RequeteAnalyse,
     response: Response,
     registry: Registry = Depends(get_registry),
     telemetry: Telemetry = Depends(get_telemetry),
-) -> dict:
-    raise NotImplementedError("gateway.analyse — POST /analyse, routage canary v1/v2")
+    tirage: float = Depends(get_tirage),
+    fabrique_client: Callable[[Bundle], LLMClient] = Depends(get_fabrique_client),
+) -> ReponseAnalyseV1 | ReponseAnalyseV2:
+    try:
+        version, reponse = routage.analyser(
+            requete.texte, registry, telemetry, tirage, fabrique_client
+        )
+    except ErreurLLM as exc:
+        raise HTTPException(
+            status_code=503, detail=f"fournisseur LLM indisponible : {exc}"
+        ) from exc
+    response.headers["X-Mardik-Version"] = version
+    return reponse

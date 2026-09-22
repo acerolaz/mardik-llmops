@@ -113,10 +113,12 @@ class Registry:
         return json.loads(self._chemin_index.read_text(encoding="utf-8"))
 
     def ecrire_index(self, index: dict[str, Any]) -> None:
+        """Écrit l'index de façon atomique : la gateway le relit à chaque requête
+        et ne doit jamais tomber sur un JSON à moitié écrit."""
         index = {**index, "mis_a_jour": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-        self._chemin_index.write_text(
-            json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        temporaire = self._chemin_index.with_name("index.json.tmp")
+        temporaire.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporaire, self._chemin_index)
 
     def active(self) -> str | None:
         return self.index().get("active")

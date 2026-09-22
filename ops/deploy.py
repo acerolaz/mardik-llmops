@@ -1,6 +1,9 @@
-"""Déploiement : publication, canary, promotion, rollback, surveillance. [STUB — canary, promotion, rollback, surveillance : sous-projet 3]
+"""Déploiement : publication, installation, canary, promotion, rollback. [surveillance : SP4]
 
-Contrat attendu (le registre — ``ops/registry`` — enregistre ; ce module décide) :
+Le registre (``ops/registry``) enregistre ; ce module décide. Chaque transition
+d'index passe par ``_transition`` : verrou exclusif (``index.lock``), état
+avant → calcul (refus = ``ErreurDeploiement``) → index écrit atomiquement →
+entrée de journal ``{evenement, avant, apres, origine, …}``.
 
     publier(version=None, *, bundle="v2", commit=None, registry=None, seuil=None,
             rapport=None, versions=None) -> manifest
@@ -12,41 +15,47 @@ Contrat attendu (le registre — ``ops/registry`` — enregistre ; ce module dé
         le registre avec commit, note, mode et seuils du gate, et journalise
         ``publication``.
 
-    deployer_canary(version, pourcentage=None, registry=None) -> index
-        Route ``pourcentage`` % du trafic vers ``version`` (défaut : CANARY_PERCENT
-        de ``.env``, sinon 10). Journalise ``canary``.
+    installer(version, depuis, registry=None, *, origine="manuel") -> manifest
+        Copie un dossier de version publié par la CI (artefact ``mardik-vX.Y.Z``)
+        dans ce registre. Idempotent à empreinte égale ; empreinte différente =
+        refus (un tag est immuable). Journalise ``installation``.
 
-    promouvoir(version, registry=None) -> index
-        La version devient active pour 100 % du trafic ; l'ancienne active est
-        conservée dans ``index["precedente"]`` ; le canary est retiré. Journalise
-        ``promotion``.
+    deployer_canary(version, pourcentage=None, registry=None, *, origine="manuel") -> index
+        ``pourcentage`` % du trafic (défaut : CANARY_PERCENT, sinon 10 ; 1 à 99)
+        vers ``version``. Même version = étape de progression (10 → 50).
+        Journalise ``canary``.
 
-    rollback(registry=None, motif="manuel") -> index
-        Retour arrière en une opération : si un canary est en cours, il est
-        retiré ; sinon l'active redevient ``precedente``. Journalise ``rollback``
-        avec le motif et les versions avant/après.
+    promouvoir(version, registry=None, *, origine="manuel") -> index
+        La version devient active à 100 % ; l'ancienne active devient
+        ``index["precedente"]`` ; le canary est retiré. Journalise ``promotion``.
 
-    surveiller(registry=None, metriques=None, *, fenetre_s=120, score_min=0.7,
-               taux_erreur_max=0.10, latence_p95_max_ms=8000, minimum=10) -> dict
-        Lit les mesures récentes (``MetricsStore``) de la version sous
-        surveillance (le canary s'il y en a un, sinon l'active). Dérive si
-        score moyen < ``score_min``, ou taux d'erreur > ``taux_erreur_max``, ou
-        P95 > ``latence_p95_max_ms`` — sur au moins ``minimum`` mesures.
-        En cas de dérive : rollback automatique + entrée au journal.
-        Renvoie {"version", "mesures", "derive", "motif", "rollback"}.
+    rollback(registry=None, motif="manuel", *, origine="manuel") -> index
+        Retour arrière en une opération, sans rebuild : retire le canary s'il y en
+        a un, sinon l'active redevient ``precedente`` (un seul niveau).
+        Journalise ``rollback`` avec le motif.
 
-Ligne de commande : ``python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport r.json]
-| canary v2.0.0 --pourcentage 10 | promouvoir v2.0.0 | rollback | surveiller [--boucle]``.
-``publier`` affiche le manifeste en JSON et tient compte des tags git.
+    surveiller(...) -> dict                                   [sous-projet 4]
+
+``origine`` : ``manuel``, ``ci:<acteur GitHub>`` ou ``auto`` (surveillance).
+
+Ligne de commande (JSON sur stdout ; refus → ``REFUSÉ : …`` sur stderr, code 1) :
+``python -m ops.deploy publier [vX.Y.Z] [--commit SHA] [--rapport r.json]
+| installer vX.Y.Z --depuis DOSSIER | canary vX.Y.Z [--pourcentage N]
+| promouvoir vX.Y.Z | rollback [--motif M] | surveiller [--boucle]`` ;
+``--origine`` sur installer, canary, promouvoir et rollback.
 """
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +65,7 @@ from eval.run_eval import Rapport, evaluer
 from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry
 
 RACINE = Path(__file__).resolve().parent.parent
+CANARY_PERCENT_DEFAUT = 10
 
 
 class ErreurDeploiement(RuntimeError):
@@ -236,18 +246,193 @@ def charger_rapport(chemin: Path | str) -> Rapport:
         raise ErreurDeploiement(f"rapport de gate incomplet : {chemin} ({exc})") from exc
 
 
-def deployer_canary(
-    version: str, pourcentage: int | None = None, registry: Registry | None = None
+# ------------------------------------------------------------- transitions
+@contextmanager
+def _verrou(registry: Registry) -> Iterator[None]:
+    """Verrou exclusif inter-processus : la CI et la surveillance (SP4) écrivent
+    toutes deux l'index ; une seule transition à la fois."""
+    with (registry.root / "index.lock").open("a") as fichier:
+        fcntl.flock(fichier, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fichier, fcntl.LOCK_UN)
+
+
+def _etat(index: dict[str, Any]) -> dict[str, Any]:
+    return {cle: valeur for cle, valeur in index.items() if cle != "mis_a_jour"}
+
+
+def _transition(
+    registry: Registry,
+    evenement: str,
+    calcul: Callable[[dict[str, Any]], dict[str, Any]],
+    *,
+    origine: str,
+    **details: Any,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.deployer_canary — X % du trafic vers la version")
+    """Sous verrou : état avant → ``calcul`` (lève si refus) → index écrit → journal."""
+    with _verrou(registry):
+        avant = _etat(registry.index())
+        try:
+            apres = calcul(dict(avant))
+        except ErreurRegistre as exc:
+            raise ErreurDeploiement(str(exc)) from exc
+        registry.ecrire_index(apres)
+        registry.journaliser(evenement, avant=avant, apres=apres, origine=origine, **details)
+        return registry.index()
 
 
-def promouvoir(version: str, registry: Registry | None = None) -> dict[str, Any]:
-    raise NotImplementedError("deploy.promouvoir — la version devient active à 100 %")
+def _pourcentage_par_defaut() -> int:
+    brut = os.environ.get("CANARY_PERCENT", "").strip()
+    if not brut:
+        return CANARY_PERCENT_DEFAUT
+    try:
+        return int(brut)
+    except ValueError as exc:
+        raise ErreurDeploiement(f"CANARY_PERCENT invalide : {brut!r} (attendu un entier)") from exc
 
 
-def rollback(registry: Registry | None = None, motif: str = "manuel") -> dict[str, Any]:
-    raise NotImplementedError("deploy.rollback — retour arrière en une opération")
+def deployer_canary(
+    version: str,
+    pourcentage: int | None = None,
+    registry: Registry | None = None,
+    *,
+    origine: str = "manuel",
+) -> dict[str, Any]:
+    """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante."""
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
+    registry = registry or Registry()
+    if pourcentage is None:
+        pourcentage = _pourcentage_par_defaut()
+
+    def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        if index.get("active") is None:
+            raise ErreurDeploiement("aucune version active : promouvoir d'abord")
+        registry.manifest(version)
+        if index.get("active") == version:
+            raise ErreurDeploiement(f"{version} est déjà la version active")
+        if not 1 <= pourcentage <= 99:
+            raise ErreurDeploiement(
+                f"pourcentage canary {pourcentage} hors de [1, 99] (100 % : promouvoir)"
+            )
+        en_cours = index.get("canary")
+        if en_cours not in (None, version):
+            raise ErreurDeploiement(
+                f"canary {en_cours} déjà en cours : rollback ou promotion d'abord"
+            )
+        return {**index, "canary": version, "canary_percent": pourcentage}
+
+    return _transition(
+        registry, "canary", calcul, origine=origine, version=version, pourcentage=pourcentage
+    )
+
+
+def promouvoir(
+    version: str, registry: Registry | None = None, *, origine: str = "manuel"
+) -> dict[str, Any]:
+    """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``."""
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
+    registry = registry or Registry()
+
+    def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        registry.manifest(version)
+        if index.get("active") == version:
+            raise ErreurDeploiement(f"{version} est déjà la version active")
+        en_cours = index.get("canary")
+        if en_cours not in (None, version):
+            raise ErreurDeploiement(
+                f"canary {en_cours} en cours : on ne promeut pas {version} par-dessus"
+            )
+        return {
+            **index,
+            "precedente": index.get("active"),
+            "active": version,
+            "canary": None,
+            "canary_percent": 0,
+        }
+
+    return _transition(registry, "promotion", calcul, origine=origine, version=version)
+
+
+def rollback(
+    registry: Registry | None = None, motif: str = "manuel", *, origine: str = "manuel"
+) -> dict[str, Any]:
+    """Retour arrière en une opération, sans rebuild : retire le canary s'il y en a
+    un, sinon revient à ``precedente`` (un seul niveau)."""
+    registry = registry or Registry()
+
+    def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        if index.get("canary") is not None:
+            return {**index, "canary": None, "canary_percent": 0}
+        precedente = index.get("precedente")
+        if precedente is None:
+            raise ErreurDeploiement("rien à annuler : ni canary en cours ni version précédente")
+        return {**index, "active": precedente, "precedente": None}
+
+    return _transition(registry, "rollback", calcul, origine=origine, motif=motif)
+
+
+def installer(
+    version: str,
+    depuis: Path | str,
+    registry: Registry | None = None,
+    *,
+    origine: str = "manuel",
+) -> dict[str, Any]:
+    """Installe dans ce registre une version publiée ailleurs (artefact CI
+    ``mardik-vX.Y.Z``). Idempotent à empreinte égale ; un tag reste immuable."""
+    registry = registry or Registry()
+    depuis = Path(depuis)
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
+    chemin = depuis / "manifest.json"
+    try:
+        manifeste = json.loads(chemin.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ErreurDeploiement(f"manifeste introuvable : {chemin}") from exc
+    except json.JSONDecodeError as exc:
+        raise ErreurDeploiement(f"manifeste illisible : {chemin} ({exc})") from exc
+    if not isinstance(manifeste, dict) or manifeste.get("version") != version:
+        decrit = manifeste.get("version") if isinstance(manifeste, dict) else None
+        raise ErreurDeploiement(f"le manifeste de {depuis} décrit {decrit!r}, pas {version}")
+    if not (depuis / "config.yaml").exists():
+        raise ErreurDeploiement(f"config.yaml absent de {depuis}")
+
+    with _verrou(registry):
+        if version in registry.versions():
+            installe = registry.manifest(version)
+            if installe.get("empreinte") != manifeste.get("empreinte"):
+                raise ErreurDeploiement(
+                    f"{version} déjà installée avec l'empreinte {installe.get('empreinte')} "
+                    f"≠ {manifeste.get('empreinte')} : un tag est immuable"
+                )
+            return installe
+        # Copier dans un dossier temporaire d'abord
+        temp_folder = registry.root / f".{version}.installation"
+        try:
+            # Nettoyer tout dossier temporaire orphelin
+            if temp_folder.exists():
+                shutil.rmtree(temp_folder, ignore_errors=True)
+            shutil.copytree(depuis, temp_folder)
+            # Renommer après succès
+            os.replace(temp_folder, registry.root / version)
+        except OSError as exc:
+            # Nettoyer le dossier temporaire en cas d'erreur
+            if temp_folder.exists():
+                shutil.rmtree(temp_folder, ignore_errors=True)
+            raise ErreurDeploiement(f"installation de {version} impossible : {exc}") from exc
+        registry.journaliser(
+            "installation",
+            version=version,
+            commit=manifeste.get("commit"),
+            note_eval=manifeste.get("note_eval"),
+            empreinte=manifeste.get("empreinte"),
+            origine=origine,
+        )
+    return manifeste
 
 
 def surveiller(
@@ -263,6 +448,10 @@ def surveiller(
     raise NotImplementedError("deploy.surveiller — détection de dérive + rollback automatique")
 
 
+def _afficher(donnees: dict[str, Any]) -> None:
+    print(json.dumps(donnees, ensure_ascii=False, indent=2))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Déploiement Mardik")
     sub = parser.add_subparsers(dest="commande", required=True)
@@ -274,6 +463,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seuil", type=float, default=None)
     p.add_argument("--rapport", default=None,
                    help="rapport JSON du gate (eval.run_eval --sortie) ; sinon le gate est joué")
+    i = sub.add_parser("installer")
+    i.add_argument("version")
+    i.add_argument("--depuis", required=True, help="dossier de version (artefact CI)")
     c = sub.add_parser("canary")
     c.add_argument("version")
     c.add_argument("--pourcentage", type=int, default=None)
@@ -285,6 +477,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--boucle", action="store_true")
     s.add_argument("--intervalle", type=float, default=5.0)
     s.add_argument("--fenetre", type=float, default=120)
+    for commande in (i, c, pr, r):
+        commande.add_argument("--origine", default="manuel",
+                              help="manuel | ci:<acteur> | auto")
     args = parser.parse_args(argv)
 
     try:
@@ -304,12 +499,14 @@ def main(argv: list[str] | None = None) -> int:
                 versions=versions_connues(registry),
             )
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        elif args.commande == "installer":
+            _afficher(installer(args.version, args.depuis, origine=args.origine))
         elif args.commande == "canary":
-            print(deployer_canary(args.version, args.pourcentage))
+            _afficher(deployer_canary(args.version, args.pourcentage, origine=args.origine))
         elif args.commande == "promouvoir":
-            print(promouvoir(args.version))
+            _afficher(promouvoir(args.version, origine=args.origine))
         elif args.commande == "rollback":
-            print(rollback(motif=args.motif))
+            _afficher(rollback(motif=args.motif, origine=args.origine))
         elif args.commande == "surveiller":
             while True:
                 res = surveiller(fenetre_s=args.fenetre)
@@ -319,6 +516,9 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(args.intervalle)
     except ErreurDeploiement as exc:
         print(f"REFUSÉ : {exc}", file=sys.stderr)
+        return 1
+    except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
+        print(f"ÉCHEC : {exc}", file=sys.stderr)
         return 1
     return 0
 

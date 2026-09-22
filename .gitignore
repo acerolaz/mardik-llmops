@@ -28,6 +28,8 @@ eval/rapport.json
 eval/.metrics_eval.jsonl
 ops/metrics.jsonl
 ops/registry/journal.jsonl
+ops/registry/index.lock
+ops/registry/index.json.tmp
 ops/registry/v[2-9].*/
 ops/registry/v1.[1-9]*/
 ops/registry/v1.0.[1-9]*/

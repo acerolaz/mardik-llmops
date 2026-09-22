@@ -1,9 +1,10 @@
-.PHONY: install up down serve proxy dashboard test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
+.PHONY: install up down serve proxy dashboard etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
 
 MODE ?= normal
 VERSION ?= v2
 DUREE ?= 60
 RPS ?= 1
+APP_URL ?= http://localhost:8000
 
 install:            ## dépendances (uv)
 	uv sync
@@ -24,16 +25,19 @@ proxy:              ## proxy de dérive en local
 dashboard:          ## tableau de bord en local (texte) — DASH=serve pour la page HTML
 	uv run python -m ops.dashboard $(if $(filter serve,$(DASH)),--serve,)
 
+etat:               ## répartition du trafic vue par la gateway (GET /gateway/etat, APP_URL)
+	@curl -sf $(APP_URL)/gateway/etat && echo
+
 test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 	MOCK=on uv run pytest -q
 
-test-unit:          ## pipeline v2, analyser_v2, gate (seuils, notation, moteurs) et versions : verts
+test-unit:          ## pipeline v2, gate, versions, routage, transitions de déploiement, workflows : verts
 	MOCK=on uv run pytest -q tests/unit
 
-test-integration:   ## hérités de la remédiation + v2 + gate + publication : verts
+test-integration:   ## remédiation + v2 + gate + publication + gateway + CLI de déploiement : verts
 	MOCK=on uv run pytest -q tests/integration
 
-test-acceptance:    ## les 10 tests du brief : 6 verts, 4 rouges (sous-projets 3 et 4)
+test-acceptance:    ## les 10 tests du brief : 8 verts, 2 rouges (sous-projet 4)
 	MOCK=on uv run pytest -v tests/acceptance
 
 eval:               ## gate sur le VRAI modèle, seuils de eval/seuils.yaml (VERSION=v2, ARGS="--essais 3 --sortie eval/rapport.json")
@@ -49,11 +53,13 @@ fixtures:           ## (ré)enregistre les fixtures MOCK en appelant le vrai mod
 
 ci:                 ## l'équivalent local du workflow GitHub (MOCK=on) : lint, tests, gate, acceptance
 	uv run ruff check .
+	@if command -v actionlint >/dev/null; then actionlint .github/workflows/*.yml; \
+	else echo "actionlint absent : workflows vérifiés par tests/unit/test_workflows.py seulement"; fi
 	MOCK=on uv run pytest -q tests/unit
 	MOCK=on uv run pytest -q tests/integration
 	MOCK=on uv run python -m eval.run_eval --version v2
 	MOCK=on uv run pytest -q tests/acceptance
-	@echo "publication / canary : en CI uniquement, voir .github/workflows/ci.yml"
+	@echo "publication, canary : ci.yml ; promotion, rollback : promotion.yml, rollback.yml — en CI uniquement"
 
 lint:
 	uv run ruff check .
