@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from app.telemetry import Mesure
-from ops.seuils import SeuilsDerive
+from ops.seuils import SeuilsDerive, SeuilsPilotage
 from ops.signaux import agreger, scores
 
 NIVEAUX = ("aucune", "marge", "critique", "echantillon_insuffisant")
@@ -96,3 +96,85 @@ def detecter_derive(
             sous_seuil,
         )
     return Derive(version, a.requetes, "aucune", tuple(constats), "", sous_seuil)
+
+
+# ------------------------------------------------------------------- palier
+@dataclass(frozen=True)
+class DecisionPalier:
+    version: str
+    action: str                        # "attendre" | "progresser" | "promouvoir"
+    pourcentage_suivant: int | None
+    constats: tuple[Constat, ...]
+    motif: str
+    requetes: int
+    depuis_s: float
+
+
+def debut_palier(journal: list[dict[str, Any]], version: str) -> float | None:
+    """``ts`` du dernier ``canary`` de ``version`` qu'aucun rollback ni aucune
+    promotion n'a suivi (quelle que soit son ``origine``) ; sinon ``None``."""
+    debut: float | None = None
+    for entree in journal:
+        evenement = entree.get("evenement")
+        if evenement == "canary":
+            debut = entree.get("ts") if entree.get("version") == version else None
+        elif evenement in ("rollback", "promotion"):
+            debut = None
+    return debut
+
+
+def _valeur(v: float | None) -> str:
+    return "absente" if v is None else f"{v:g}"
+
+
+def evaluer_palier(
+    version: str,
+    mesures_canary: Sequence[Mesure],
+    mesures_active: Sequence[Mesure],
+    seuils: SeuilsPilotage,
+    *,
+    depuis_s: float,
+    pourcentage: int,
+) -> DecisionPalier:
+    """Le palier courant est-il tenu ? (C2.5, C2.17)
+
+    Les erreurs du canary sont comparées à celles de l'active si elle a au moins
+    ``seuils.minimum`` mesures, sinon au seuil absolu ``derive.taux_erreur_max``.
+    Un canary sans score (ou sans latence mesurable) ne progresse jamais.
+    """
+    p = seuils.promotion
+    c = agreger(mesures_canary)
+    a = agreger(mesures_active)
+    if depuis_s < p.duree_min_s or c.requetes < p.requetes_min:
+        return DecisionPalier(
+            version, "attendre", None, (),
+            f"palier {pourcentage} % : {c.requetes}/{p.requetes_min} requêtes, "
+            f"{depuis_s:.0f}/{p.duree_min_s:.0f} s",
+            c.requetes, depuis_s,
+        )
+    if a.requetes >= seuils.minimum:
+        ref_erreur = round(a.taux_erreur + p.ecart_erreur_max, 4)
+    else:
+        ref_erreur = seuils.derive.taux_erreur_max
+    constats = (
+        Constat("taux_erreur", c.taux_erreur, ref_erreur, c.taux_erreur <= ref_erreur),
+        Constat("latence_p95_ms", c.latence_p95_ms, p.latence_p95_max_ms,
+                c.latence_p95_ms is not None and c.latence_p95_ms < p.latence_p95_max_ms),
+        Constat("score_moyen", c.score_moyen, p.score_moyen_min,
+                c.score_moyen is not None and c.score_moyen >= p.score_moyen_min),
+        Constat("score_p10", c.score_p10, p.score_p10_min,
+                c.score_p10 is not None and c.score_p10 >= p.score_p10_min),
+    )
+    echec = next((x for x in constats if not x.ok), None)
+    if echec is not None:
+        return DecisionPalier(
+            version, "attendre", None, constats,
+            f"critère non tenu : {echec.signal} {_valeur(echec.valeur)} (seuil {echec.seuil:g})",
+            c.requetes, depuis_s,
+        )
+    suivant = next((x for x in p.paliers if x > pourcentage), 100)
+    return DecisionPalier(
+        version, "promouvoir" if suivant == 100 else "progresser", suivant, constats,
+        f"palier {pourcentage} % tenu : {c.requetes} analyses conformes en {depuis_s:.0f} s",
+        c.requetes, depuis_s,
+    )
