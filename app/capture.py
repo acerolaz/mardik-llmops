@@ -87,12 +87,20 @@ def get_capture() -> Capture:
 
 @contextmanager
 def _verrouille(chemin: Path) -> Iterator[IO[str]]:
+    """Ouvre ``chemin`` en ajout, sous verrou exclusif.
+
+    Le tampon est vidé **avant** le déverrouillage : sinon une ligne restée
+    dans le tampon partirait hors verrou et pourrait s'entrelacer avec l'écriture
+    d'un autre processus (l'app et le versement humain écrivent le même fichier).
+    """
     chemin.parent.mkdir(parents=True, exist_ok=True)
     with chemin.open("a+", encoding="utf-8") as fichier:
         fcntl.flock(fichier, fcntl.LOCK_EX)
         try:
             yield fichier
         finally:
+            fichier.flush()
+            os.fsync(fichier.fileno())
             fcntl.flock(fichier, fcntl.LOCK_UN)
 
 
