@@ -217,9 +217,13 @@ def charger_rapport(chemin: Path | str) -> Rapport:
     """Relit le rapport JSON écrit par ``eval.run_eval --sortie``."""
     chemin = Path(chemin)
     try:
-        data = json.loads(chemin.read_text(encoding="utf-8"))
+        contenu = chemin.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise ErreurDeploiement(f"rapport de gate introuvable : {chemin}") from exc
+    except OSError as exc:
+        raise ErreurDeploiement(f"rapport de gate illisible : {chemin} ({exc})") from exc
+    try:
+        data = json.loads(contenu)
     except json.JSONDecodeError as exc:
         raise ErreurDeploiement(f"rapport de gate illisible : {chemin} ({exc})") from exc
     if not isinstance(data, dict):
