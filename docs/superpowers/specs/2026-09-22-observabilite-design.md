@@ -1,10 +1,9 @@
 # Sous-projet 4 — Observabilité & boucles de rétroaction
 
 *Spec de conception — 2026-09-22. Quatrième des quatre sous-projets de la v2
-Mardik (cf. `2026-09-21-moteur-v2-design.md`, §1). Part de `main` @ `41297d9`
-(sous-projets 1 et 2 fusionnés). Suppose le sous-projet 3 (routage &
-déploiement, `2026-09-22-routage-deploiement-design.md`, branche
-`feature/routage-deploiement`) livré avant la phase B.*
+Mardik (cf. `2026-09-21-moteur-v2-design.md`, §1). Part de `main` @ `8833345`
+(sous-projets 1, 2 et 3 fusionnés ; SP3 : `2026-09-22-routage-deploiement-design.md`).
+État de départ : 8 tests d'acceptance verts, 2 rouges — les deux de ce sous-projet.*
 
 ## 1. Contexte et décisions de cadrage
 
@@ -26,16 +25,19 @@ l'enrichissement et le journal de pilotage enrichi.
 | D3 | Enrichissement | **Capture automatique, versement humain** : capture anonymisée vers `eval/candidats.jsonl` ; `python -m eval.enrichir verser <id> --clauses …` crée le contrat annoté (validation juriste, B2.4) ; le gate le rejoue à la fusion suivante. |
 | D4 | Seuils | **Config as code** : `ops/seuils_pilotage.yaml` versionné, même convention que `eval/seuils.yaml` (SP2, `motif` obligatoire). Tout changement de l'un ou l'autre fichier est journalisé (`seuils`). `calibrer` propose des valeurs, ne les écrit pas. |
 | D5 | Exécution des boucles | **Processus `pilote` dédié** (service docker-compose) : `python -m ops.deploy piloter`, une tour toutes les 5 s, **sans état** (tout est relu : métriques, registre, journal). |
-| D6 | Phasage | **Décider ≠ exécuter** : la logique de décision est pure (`ops/pilotage.py`) ; `ops/deploy.py` ne fait que l'exécuter. Phase A démarre sans SP3 ; phase B câble après sa fusion (§2). |
+| D6 | Découpage | **Décider ≠ exécuter** : la logique de décision est pure (`ops/pilotage.py`) ; `ops/deploy.py` ne fait que l'exécuter. Une seule branche depuis `main` (SP3 fusionné), en deux parties : partie 1 = décisions, dashboard, capture ; partie 2 = exécution des boucles (§2). |
 | D7 | Calibration (C2.2, C2.19) | Sur la **distribution de production** (`metrics.jsonl`) et non sur le golden dataset : les rapports du gate ne portent pas de score de confiance par contrat, seulement la note de rappel. Écart assumé à C2.19 ; la référence « golden » reste la note du gate. |
 
 **Alignement avec SP3** : vocabulaire `origine` ∈ `manuel` | `ci:<acteur>` |
 `auto` ; progression de palier = rappel de `deployer_canary` avec la même
-version ; rollback à un niveau ; transitions sérialisées par `_verrou`.
+version ; rollback à un niveau ; transitions sérialisées par `_verrou` ;
+refus (`ErreurDeploiement`) si la version n'est pas au format `vX.Y.Z` ou si
+aucune version n'est active. `promotion.yml` et `rollback.yml` restent la voie
+humaine (`origine: ci:<acteur>`) à côté du pilote automatique.
 
 ## 2. Périmètre
 
-**Phase A — indépendante de SP3 (démarre depuis `main`)**
+**Partie 1 — décisions, tableau de bord, capture**
 
 - `ops/seuils_pilotage.yaml` + `ops/seuils.py` : chargement, validation, empreinte, `calibrer`, CLI
 - `ops/signaux.py` : agrégats purs sur des `Mesure`
@@ -44,15 +46,16 @@ version ; rollback à un niveau ; transitions sérialisées par `_verrou`.
 - `app/capture.py` : anonymisation + `capturer` ; hook sur `POST /v2/analyse` (`app/api_v2.py`)
 - `eval/enrichir.py` : CLI `lister`, `verser`
 - `.gitignore` : `eval/candidats.jsonl` ; `tests/conftest.py` : `CANDIDATS_PATH` dans `tmp_path` (une ligne)
-- `docs/exploitation.md` : §6 « Surveillance et seuils », §7 « Preuve d'exécution » (les §4–5 appartiennent à SP3)
+- `docs/exploitation.md` : §6 « Surveillance et seuils », §7 « Preuve d'exécution »
 - Tests unitaires et d'intégration de ces unités
 
-**Phase B — après fusion de SP3**
+**Partie 2 — exécution des boucles**
 
 - `ops/deploy.py` : `surveiller`, `piloter`, exécution des décisions ; `**details` keyword-only ajoutés à `deployer_canary`, `promouvoir`, `rollback` (passés à `_transition`) ; CLI `piloter`
 - Hook de capture sur la gateway `POST /analyse` (`app/gateway.py`)
 - `docker-compose.yml` : service `pilote` ; `Makefile` : cible `pilote`
 - Tests d'intégration de `surveiller` / `piloter`, démo live
+- Renvois laissés par SP3 : `docs/exploitation.md` §4 (« les critères automatiques … ne s'appliquent pas encore ») et le commentaire d'en-tête de `.github/workflows/promotion.yml` ; compteurs de tests du `README.md` et du `Makefile` (« 8 verts, 2 rouges »)
 
 **Hors périmètre**
 
@@ -83,7 +86,7 @@ version ; rollback à un niveau ; transitions sérialisées par `_verrou`.
 | `ops/signaux.py` | P50/P95/P10, taux d'erreur, score moyen, histogramme, série par minute, coût | `Mesure` |
 | `ops/pilotage.py` | Décisions pures + gabarits de résumé métier | signaux, seuils |
 | `ops/dashboard.py` | Agrège et rend | signaux, pilotage, `Registry` (lecture) |
-| `ops/deploy.py` | Exécute les décisions (phase B) | pilotage, transitions SP3 |
+| `ops/deploy.py` | Exécute les décisions (partie 2) | pilotage, transitions SP3 |
 | `app/capture.py` | Anonymise et capture | seuils |
 | `eval/enrichir.py` | Liste et verse les candidats | capture (format), `Registry` (journal) |
 
@@ -201,7 +204,7 @@ Contrat du stub (vérifié par `test_dashboard_par_version`), enrichi sans le ca
   côte à côte par version, sparklines P95 et erreurs par minute, alertes, journal
   en langage métier. Fenêtre sans trafic → « aucun trafic dans la fenêtre ».
 
-## 6. Décisions — `ops/pilotage.py` (pur, phase A)
+## 6. Décisions — `ops/pilotage.py` (pur, partie 1)
 
 Aucune écriture : chaque fonction reçoit des mesures, des seuils et des entrées
 de journal, et renvoie une décision.
@@ -263,7 +266,7 @@ class DecisionPalier:
   - enrichissement : « Contrat c13 ajouté au jeu d'évaluation (score en production 0,48). »
   - seuils : « Seuil de pilotage modifié : score_min 0,70 → 0,68 (motif : … ). »
 
-## 7. Exécution — `ops/deploy.py` (phase B)
+## 7. Exécution — `ops/deploy.py` (partie 2)
 
 ### 7.1 Détails passés au journal
 
@@ -345,7 +348,7 @@ docker-compose `pilote` la lance (mêmes volumes `ops/`, `eval/` que `app`) ;
   capturé n'est pas réécrit). Écriture en ajout, sous verrou. `OSError` et
   `ErreurSeuilsPilotage` sont journalisées (`capture.echec`) et avalées : **la réponse
   client n'est jamais affectée**.
-- Branchement : `POST /v2/analyse` (phase A) et `POST /analyse` (phase B)
+- Branchement : `POST /v2/analyse` (partie 1) et `POST /analyse` (partie 2)
   reçoivent `BackgroundTasks` et ajoutent `capturer` après une réponse v2. Pas
   dans `analyser_v2` : le gate l'appelle aussi et ne doit rien capturer.
 
@@ -414,22 +417,24 @@ est partagé) ; documenté dans `exploitation.md` §6.
 
 ### 10.2 Intégration — `tests/integration/`
 
-| Fichier | Phase | Couvre |
+| Fichier | Partie | Couvre |
 |---|---|---|
-| `test_dashboard.py` | A | `resume` complet (palier, alertes, candidats, journal) ; `rendre_texte` ; `rendre_html` (refresh, SVG, versions) ; fenêtre vide |
-| `test_capture.py` | A | `TestClient` sur `/v2/analyse` : score bas → candidat ; score haut → rien ; texte déjà capturé → pas de doublon ; `evaluer("v2")` → aucun candidat ; I/O en échec → 200 inchangé |
-| `test_enrichir.py` | A | `verser` : `cNN.txt`, ligne d'`attendus`, ligne `verse`, entrée `enrichissement` ; chaque refus ; `evaluer` inclut le nouveau contrat |
-| `test_surveiller.py` | B | rollback par score / erreurs / P95 ; alerte de marge unique ; échantillon insuffisant ; mesures d'un palier antérieur ignorées ; `pilotage_refus` sans retour arrière |
-| `test_piloter.py` | B | `tours=` : conforme → 10 → 50 → promotion (trois entrées `origine: auto`) ; dérive → rollback sans promotion ; redémarrage → palier relu ; seuils modifiés → `seuils` ; seuils cassés en cours → `seuils_invalides` et boucle vivante |
-| `test_capture.py` (ajout) | B | même chose via la gateway `/analyse` quand le canary v2 est tiré |
+| `test_dashboard.py` | 1 | `resume` complet (palier, alertes, candidats, journal) ; `rendre_texte` ; `rendre_html` (refresh, SVG, versions) ; fenêtre vide |
+| `test_capture.py` | 1 | `TestClient` sur `/v2/analyse` : score bas → candidat ; score haut → rien ; texte déjà capturé → pas de doublon ; `evaluer("v2")` → aucun candidat ; I/O en échec → 200 inchangé |
+| `test_enrichir.py` | 1 | `verser` : `cNN.txt`, ligne d'`attendus`, ligne `verse`, entrée `enrichissement` ; chaque refus ; `evaluer` inclut le nouveau contrat |
+| `test_surveiller.py` | 2 | rollback par score / erreurs / P95 ; alerte de marge unique ; échantillon insuffisant ; mesures d'un palier antérieur ignorées ; `pilotage_refus` sans retour arrière |
+| `test_piloter.py` | 2 | `tours=` : conforme → 10 → 50 → promotion (deux entrées `origine: auto` : `canary` 50 %, `promotion`) ; dérive → rollback sans promotion ; redémarrage → palier relu ; seuils modifiés → `seuils` ; seuils cassés en cours → `seuils_invalides` et boucle vivante |
+| `test_capture.py` (ajout) | 2 | même chose via la gateway `/analyse` quand le canary v2 est tiré |
 
 ### 10.3 Critères de fin
 
-- **Phase A** : `test_dashboard_par_version` vert ; tests unitaires et
-  d'intégration de la phase A verts ; aucune régression sur `main` ; `ruff` propre.
-- **Phase B** : `test_journal_derive_et_rollback_automatique` vert ; les 10 tests
+- **Partie 1** : `test_dashboard_par_version` vert (9 verts sur 10) ; tests unitaires
+  et d'intégration de la partie 1 verts ; aucune régression ; `ruff` propre.
+- **Partie 2** : `test_journal_derive_et_rollback_automatique` vert ; les 10 tests
   d'acceptance verts ; `docker compose up` lance `pilote` ; les trois scénarios
-  de démo (§11) exécutés et consignés dans `exploitation.md` §7.
+  de démo (§11) exécutés et consignés dans `exploitation.md` §7 ; tests de SP3
+  (`tests/unit/test_transitions.py`, `tests/integration/test_cli_deploy.py`,
+  `tests/integration/test_gateway.py`) toujours verts.
 
 ## 11. Démo live (C2.10) — `docs/exploitation.md` §7
 
@@ -445,7 +450,7 @@ est partagé) ; documenté dans `exploitation.md` §6.
 
 | Risque | Parade |
 |---|---|
-| Conflits avec SP3 en cours sur `ops/deploy.py`, `docker-compose.yml`, `exploitation.md` | Phase A ne touche pas `ops/deploy.py` ; les autres fichiers reçoivent des ajouts dans des zones distinctes (§6–7 d'`exploitation.md`, nouveau service). Phase B part de `main` après fusion de SP3. |
+| Régression sur les transitions de SP3 (`**details` ajoutés) | Ajout keyword-only rétrocompatible ; les appelants ne passent jamais `version`, `pourcentage` ni `motif` dans `details` ; la suite de SP3 est rejouée à chaque tâche de la partie 2. |
 | Oscillation promotion/rollback sur un petit échantillon | `minimum`, `requetes_min`, `duree_min_s` ; mesures limitées au palier courant ; rollback à un niveau (SP3). |
 | Fenêtres de démo trop courtes en production | Valeurs de production dans le YAML (commentaires) et le `motif` ; ajustement = commit + entrée `seuils`. |
 | Données client dans les candidats | Anonymisation, fichier hors git, versement conditionné à la relecture juriste. |

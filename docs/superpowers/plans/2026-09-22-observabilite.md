@@ -4,7 +4,7 @@
 
 **Goal:** Les métriques de production pilotent la chaîne : un tableau de bord par version, une surveillance qui déclenche le rollback automatique, une promotion canary 10 → 50 → 100 % pilotée par des critères, la capture des cas à faible confiance vers le jeu d'évaluation, et un journal de pilotage lisible par le métier.
 
-**Architecture:** Décider ≠ exécuter. `ops/signaux.py` agrège des `Mesure` (fonctions pures) ; `ops/seuils.py` charge `ops/seuils_pilotage.yaml` (config as code) ; `ops/pilotage.py` rend des décisions pures (dérive, palier, changements de seuils, résumés métier). `ops/dashboard.py` affiche avec les mêmes calculs. En phase B, `ops/deploy.py::surveiller` et `piloter` exécutent ces décisions via les transitions du sous-projet 3 (`rollback`, `deployer_canary`, `promouvoir`). La capture vit dans `app/capture.py` (tâche de fond des routes) ; le versement dans `eval/enrichir.py` (CLI humaine).
+**Architecture:** Décider ≠ exécuter. `ops/signaux.py` agrège des `Mesure` (fonctions pures) ; `ops/seuils.py` charge `ops/seuils_pilotage.yaml` (config as code) ; `ops/pilotage.py` rend des décisions pures (dérive, palier, changements de seuils, résumés métier). `ops/dashboard.py` affiche avec les mêmes calculs. En partie 2, `ops/deploy.py::surveiller` et `piloter` exécutent ces décisions via les transitions du sous-projet 3 (fusionné sur `main`) (`rollback`, `deployer_canary`, `promouvoir`). La capture vit dans `app/capture.py` (tâche de fond des routes) ; le versement dans `eval/enrichir.py` (CLI humaine).
 
 **Tech Stack:** Python 3.11, FastAPI (`BackgroundTasks`), PyYAML, structlog, pytest, ruff, uv, docker compose.
 
@@ -13,9 +13,10 @@
 ## Global Constraints
 
 - Répertoire de travail : racine du dépôt git (le dossier qui contient `pyproject.toml`). Toutes les commandes se lancent depuis cette racine.
-- **Phase A** (tâches 1–12) : branche `feature/observabilite-a` créée depuis `main`. **Phase B** (tâches 13–17) : branche `feature/observabilite-b` créée depuis `main` **après la fusion du sous-projet 3** (`feature/routage-deploiement`). Ne pas commencer la phase B avant.
+- Une seule branche `feature/observabilite`, créée depuis `main` @ `8833345` ou plus récent (sous-projets 1 à 3 fusionnés). **Partie 1** (tâches 1–12) : décisions, tableau de bord, capture. **Partie 2** (tâches 13–17) : exécution des boucles. Une seule PR à la fin.
+- État de départ vérifié : `MOCK=on uv run pytest tests/acceptance` → 8 verts, 2 rouges (`test_dashboard_par_version`, `test_journal_derive_et_rollback_automatique`).
 - Tests : `MOCK=on uv run pytest …` (le `tests/conftest.py` force `MOCK=on`, `METRICS_PATH`, `REGISTRY_PATH` dans `tmp_path` ; la tâche 8 y ajoute `CANDIDATS_PATH`).
-- **Ne jamais modifier** : `ops/registry/__init__.py`, `app/llm_client.py`, `app/telemetry.py`, `app/api_v1.py`, `app/pipeline/`, `eval/run_eval.py`, `eval/seuils.yaml`, `tests/acceptance/`. `tests/conftest.py` : **uniquement** la ligne `CANDIDATS_PATH` de la tâche 8.
+- **Ne jamais modifier** : `ops/registry/__init__.py`, `app/llm_client.py`, `app/telemetry.py`, `app/api_v1.py`, `app/pipeline/`, `app/routage.py`, `eval/run_eval.py`, `eval/seuils.yaml`, `tests/acceptance/`, `.github/workflows/*.yml` (sauf le commentaire d'en-tête de `promotion.yml`, tâche 17). Dans `ops/deploy.py` et `app/gateway.py` (code du sous-projet 3), seules les modifications décrites aux tâches 13–16. `tests/conftest.py` : **uniquement** la ligne `CANDIDATS_PATH` de la tâche 8.
 - Signatures imposées par les tests d'acceptance : `resume(metriques=None, *, fenetre_s=300, registry=None, …) -> dict` ; `rendre_texte(r) -> str` ; `surveiller(registry=None, metriques=None, *, fenetre_s=…, score_min=…, taux_erreur_max=…, latence_p95_max_ms=…, minimum=…) -> dict` avec les clés `version`, `mesures`, `derive`, `motif`, `rollback`.
 - Vocabulaire `origine` (fixé par SP3) : `manuel` | `ci:<acteur>` | `auto`. Le pilotage écrit `auto` ; le versement humain `manuel`.
 - Valeurs initiales des seuils (spec §4) : `fenetre_s: 300`, `minimum: 10`, `intervalle_s: 5`, `derive.score_min: 0.70`, `derive.marge: 0.05`, `derive.taux_erreur_max: 0.10`, `derive.latence_p95_max_ms: 8000`, `promotion.paliers: [10, 50, 100]`, `promotion.duree_min_s: 60`, `promotion.requetes_min: 20`, `promotion.ecart_erreur_max: 0.02`, `promotion.latence_p95_max_ms: 8000`, `promotion.score_moyen_min: 0.75`, `promotion.score_p10_min: 0.65`, `capture.score_max: 0.70`.
@@ -44,15 +45,16 @@
 | `ops/deploy.py` | `**details` sur les transitions ; `surveiller`, `tour`, `piloter`, CLI | 13–15 |
 | `app/gateway.py` | Hook de capture sur `POST /analyse` | 16 |
 | `docker-compose.yml` | Service `pilote` | 17 |
+| `README.md`, `.github/workflows/promotion.yml` | Compteurs de tests, CLI `piloter` ; commentaire d'en-tête (la promotion est désormais pilotée) | 17 |
 | `tests/unit/test_seuils_pilotage.py`, `test_signaux.py`, `test_calibrer.py`, `test_pilotage.py`, `test_resume_metier.py`, `test_anonymisation.py` | Unitaires | 1–7 |
-| `tests/integration/test_capture.py`, `test_enrichir.py`, `test_dashboard.py` | Intégration phase A | 8–11 |
-| `tests/integration/test_details_journal.py`, `test_surveiller.py`, `test_piloter.py` | Intégration phase B | 13–15 |
+| `tests/integration/test_capture.py`, `test_enrichir.py`, `test_dashboard.py` | Intégration partie 1 | 8–11 |
+| `tests/integration/test_details_journal.py`, `test_surveiller.py`, `test_piloter.py` | Intégration partie 2 | 13–15 |
 
 ---
 
-# Phase A — indépendante du sous-projet 3
+# Partie 1 — décisions, tableau de bord, capture
 
-Préalable : `git switch main && git pull && git switch -c feature/observabilite-a`.
+Préalable : `git switch main && git pull && git switch -c feature/observabilite`, puis `MOCK=on uv run pytest -q tests/acceptance` → 8 verts, 2 rouges.
 
 ### Task 1: Seuils de pilotage — `ops/seuils_pilotage.yaml` et chargement
 
@@ -1813,7 +1815,7 @@ eval/candidats.jsonl
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `MOCK=on uv run pytest tests/integration/test_capture.py -v && MOCK=on uv run pytest -q && uv run ruff check .`
-Expected: `test_capture.py` PASS (6 tests) ; suite complète : aucune régression (les tests d'acceptance des sous-projets 3 et 4 restent rouges comme avant) ; ruff propre. Vérifier aussi `git status` : aucun `eval/candidats.jsonl` créé dans le dépôt.
+Expected: `test_capture.py` PASS (6 tests) ; suite complète : aucune régression (seuls les deux tests d'acceptance du sous-projet 4 restent rouges) ; ruff propre. Vérifier aussi `git status` : aucun `eval/candidats.jsonl` créé dans le dépôt.
 
 - [ ] **Step 5: Commit**
 
@@ -2530,7 +2532,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 12: Documentation de surveillance et clôture de la phase A
+### Task 12: Documentation de surveillance et clôture de la partie 1
 
 **Files:**
 - Modify: `docs/exploitation.md` (§6 « Surveillance et seuils »)
@@ -2538,7 +2540,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: tâches 1–11.
-- Produces: la §6 d'`exploitation.md`, remplie ; la phase A prête à relire.
+- Produces: la §6 d'`exploitation.md`, remplie ; la partie 1 terminée et poussée.
 
 - [ ] **Step 1: Remplir la §6 d'`exploitation.md`**
 
@@ -2585,36 +2587,32 @@ l'évalue réellement.
 
 - [ ] **Step 2: Mettre à jour le `Makefile`**
 
-Remplacer le commentaire de la cible `test-acceptance` :
+Remplacer le commentaire de la cible `test-acceptance` (aujourd'hui « 8 verts, 2 rouges (sous-projet 4) ») :
 
 ```makefile
-test-acceptance:    ## les 10 tests du brief : 7 verts, 3 rouges (sous-projet 3 + rollback automatique)
+test-acceptance:    ## les 10 tests du brief : 9 verts, 1 rouge (rollback automatique, sous-projet 4)
 ```
 
-- [ ] **Step 3: Vérifier la phase A**
+- [ ] **Step 3: Vérifier la partie 1**
 
 Run: `MOCK=on uv run pytest -q && uv run ruff check . && MOCK=on uv run pytest -v tests/acceptance`
-Expected: unitaires et intégration verts ; acceptance : `test_dashboard_par_version` **vert** en plus des 6 déjà verts ; restent rouges `test_rollback_en_une_operation`, `test_promotion_canary_puis_totale` (SP3) et `test_journal_derive_et_rollback_automatique` (phase B). `git status` ne montre aucun `eval/candidats.jsonl` ni `ops/metrics.jsonl`.
+Expected: unitaires et intégration verts ; acceptance : **9 verts**, `test_dashboard_par_version` compris ; reste rouge `test_journal_derive_et_rollback_automatique` (partie 2). `git status` ne montre aucun `eval/candidats.jsonl` ni `ops/metrics.jsonl`.
 
-- [ ] **Step 4: Commit et PR**
+- [ ] **Step 4: Commit et push**
 
 ```bash
 git add docs/exploitation.md Makefile
 git commit -m "docs(exploitation): surveillance, seuils, calibration et enrichissement
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
-git push -u origin feature/observabilite-a
-gh pr create --draft --title "Observabilité — phase A : signaux, décisions, dashboard, capture (sous-projet 4)" \
-  --body "Phase A du sous-projet 4 (spec docs/superpowers/specs/2026-09-22-observabilite-design.md). test_dashboard_par_version vert ; la phase B (surveiller, piloter) suit la fusion du sous-projet 3.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+git push -u origin feature/observabilite
 ```
 
 ---
 
-# Phase B — après la fusion du sous-projet 3
+# Partie 2 — exécution des boucles
 
-Préalable : le sous-projet 3 est fusionné sur `main` (`ops/deploy.py` contient `_transition`, `deployer_canary`, `promouvoir`, `rollback` avec `*, origine=` ; `app/gateway.py` route `POST /analyse` via `app/routage.py`). La phase A est fusionnée. `git switch main && git pull && git switch -c feature/observabilite-b`. Vérifier : `grep -n "def _transition\|def rollback\|def deployer_canary\|def promouvoir" ops/deploy.py` — les quatre fonctions existent ; sinon, **arrêter** et signaler.
+Même branche. Le code du sous-projet 3 (fusionné en `8833345`) fournit dans `ops/deploy.py` : `_transition(registry, evenement, calcul, *, origine, **details)` sous verrou, `deployer_canary`, `promouvoir`, `rollback` (keyword-only `origine`, **sans** `**details`), un `main()` dont le `try` se termine par `except ErreurDeploiement` puis `except (ErreurRegistre, OSError, json.JSONDecodeError)`, et les imports `time`, `Callable`, `Path`, `MetricsStore`. Contrôle rapide : `grep -n "def _transition\|def rollback\|def deployer_canary\|def promouvoir\|^    except" ops/deploy.py`. Si ces signatures ont changé depuis, adapter les extraits des tâches 13–15 sans en changer le comportement.
 
 ### Task 13: Détails de pilotage dans le journal des transitions
 
@@ -2723,8 +2721,8 @@ Ajouter une phrase à chaque docstring : « ``details`` (pilotage) est recopié 
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `MOCK=on uv run pytest tests/integration/test_details_journal.py tests/integration -q && uv run ruff check ops/deploy.py`
-Expected: PASS ; les tests du sous-projet 3 (`test_transitions.py`, `test_cli_deploy.py`, …) restent verts.
+Run: `MOCK=on uv run pytest tests/integration/test_details_journal.py -v && MOCK=on uv run pytest -q && uv run ruff check ops/deploy.py`
+Expected: PASS ; les tests du sous-projet 3 (`tests/unit/test_transitions.py`, `tests/integration/test_cli_deploy.py`, `tests/integration/test_gateway.py`) restent verts.
 
 - [ ] **Step 5: Commit**
 
@@ -2841,11 +2839,9 @@ Expected: FAIL — `NotImplementedError: deploy.surveiller — détection de dé
 
 - [ ] **Step 3: Write minimal implementation**
 
-Dans `ops/deploy.py`, ajouter aux imports (en conservant ceux du sous-projet 3) :
+Dans `ops/deploy.py`, ajouter `from dataclasses import replace` aux imports de la bibliothèque standard (après `from contextlib import contextmanager`), et après `from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry` :
 
 ```python
-from dataclasses import replace
-
 from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
 from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
 from ops.signaux import filtrer
@@ -2937,7 +2933,7 @@ def surveiller(
     return resultat
 ```
 
-Dans `main`, remplacer `s.add_argument("--fenetre", type=float, default=120)` par `s.add_argument("--fenetre", type=float, default=None)` (la fenêtre vient des seuils), et envelopper la branche `surveiller` : ajouter `ErreurSeuilsPilotage` au `except` final :
+Dans `main`, remplacer `s.add_argument("--fenetre", type=float, default=120)` par `s.add_argument("--fenetre", type=float, default=None)` (la fenêtre vient des seuils), et insérer un `except ErreurSeuilsPilotage` entre les deux `except` existants du sous-projet 3 (`ErreurSeuilsPilotage` hérite de `ValueError`, pas d'`OSError` : il lui faut sa branche). La fin du `try` devient :
 
 ```python
     except ErreurDeploiement as exc:
@@ -2946,6 +2942,10 @@ Dans `main`, remplacer `s.add_argument("--fenetre", type=float, default=120)` pa
     except ErreurSeuilsPilotage as exc:
         print(f"SEUILS INVALIDES : {exc}", file=sys.stderr)
         return 1
+    except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
+        print(f"ÉCHEC : {exc}", file=sys.stderr)
+        return 1
+    return 0
 ```
 
 Mettre à jour la docstring du module : `surveiller` lit ses valeurs par défaut dans `ops/seuils_pilotage.yaml` et journalise `alerte` / `pilotage_refus`.
@@ -3121,7 +3121,7 @@ from ops.seuils import (
 )
 ```
 
-(fusionner avec les imports existants ; `Callable` et `Path` peuvent déjà être importés par le sous-projet 3.)
+(remplacer les deux lignes `from ops.pilotage …` et `from ops.seuils …` ajoutées à la tâche 14 ; `Callable` et `Path` sont déjà importés par le sous-projet 3.)
 
 Ajouter après `surveiller` :
 
@@ -3341,7 +3341,7 @@ def analyse(
     return reponse
 ```
 
-(Si la route du sous-projet 3 a évolué depuis, garder son corps et n'ajouter que les paramètres `taches`, `capture` et les deux lignes de capture avant `return`.)
+(Le corps est celui de la route fusionnée par le sous-projet 3 ; seuls s'ajoutent les paramètres `taches`, `capture` et les deux lignes de capture avant `return`.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -3364,7 +3364,9 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `docker-compose.yml` (service `pilote`)
 - Modify: `Makefile` (cible `pilote` ; commentaire `test-acceptance`)
-- Modify: `docs/exploitation.md` (§7 « Preuve d'exécution »)
+- Modify: `docs/exploitation.md` (§4, dernier paragraphe avant « Refus » ; §7 « Preuve d'exécution »)
+- Modify: `.github/workflows/promotion.yml` (commentaire d'en-tête uniquement)
+- Modify: `README.md` (compteurs de tests, CLI, arborescence)
 
 **Interfaces:**
 - Consumes: tout ce qui précède.
@@ -3395,7 +3397,7 @@ Et remplacer le commentaire du service `dashboard` (`# Le tableau de bord (à im
 
 - [ ] **Step 2: `Makefile`**
 
-Ajouter `pilote` à la ligne `.PHONY`, puis la cible après `dashboard` :
+Ajouter `pilote` à la ligne `.PHONY` (qui contient déjà `etat`, ajoutée par le sous-projet 3), puis la cible après `dashboard` :
 
 ```makefile
 pilote:             ## boucle du pilote en local : surveillance, rollback auto, promotion canary
@@ -3444,21 +3446,65 @@ Un contrat ambigu envoyé à `/analyse` sous la v2 obtient un score < 0,70 →
 ```
 ````
 
-- [ ] **Step 4: Vérification finale**
+- [ ] **Step 4: Renvois laissés par le sous-projet 3**
+
+`docs/exploitation.md` §4 — remplacer le paragraphe :
+
+```markdown
+Avant chaque étape, regarder le tableau de bord de la version canary : taux
+d'erreur ≤ v1, latence P95 < 8 s, score de confiance stable. Dans cette
+version la décision est humaine ; les critères automatiques décrits en §6
+(sous-projet 4) ne s'appliquent pas encore ici.
+```
+
+par :
+
+```markdown
+Le pilote (service `pilote`, `python -m ops.deploy piloter`) enchaîne 10 → 50 →
+100 % tout seul quand les critères du §6 tiennent sur la fenêtre du palier, et
+journalise chaque étape avec `origine: auto`. `promotion.yml` reste la voie
+humaine pour forcer une étape (`origine: ci:<acteur>`) ; `rollback.yml` pour
+l'interrompre.
+```
+
+`.github/workflows/promotion.yml` — remplacer les deux premières lignes de commentaire :
+
+```yaml
+# Promotion du canary : 50 % du trafic, puis 100 % (la version devient active).
+# Voie humaine : le pilote (sous-projet 4) promeut automatiquement quand les
+# métriques tiennent ; ce workflow force une étape à la main.
+```
+
+(la troisième ligne, « S'exécute sur le runner auto-hébergé de prod, jamais sur une PR. », est conservée ; rien d'autre ne change dans le workflow — `tests/unit/test_workflows.py` doit rester vert.)
+
+`README.md` — remplacements exacts :
+
+| Avant | Après |
+|---|---|
+| `make test-acceptance         # 8 verts, 2 rouges (sous-projet 4) ; 1 vert, 9 rouges au départ` | `make test-acceptance         # 10 verts ; 1 vert, 9 rouges au départ` |
+| `\| \`make test-acceptance\` \| les 10 tests du brief (8 verts, 2 en attente du sous-projet 4) \|` | `\| \`make test-acceptance\` \| les 10 tests du brief (verts) \|` |
+| `\| \`make dashboard\` \| tableau de bord (texte) ; \`DASH=serve\` pour la page HTML \|` | la même ligne, suivie de `\| \`make pilote\` \| boucle du pilote : surveillance, rollback automatique, promotion canary \|` |
+| `… \| rollback [--motif M] [--origine ci:acteur] \| surveiller --boucle\`.` | `… \| rollback [--motif M] [--origine ci:acteur] \| surveiller [--boucle] \| piloter [--tours N]\`. Seuils : \`ops/seuils_pilotage.yaml\` ; calibration : \`python -m ops.seuils calibrer --version vX.Y.Z\` ; enrichissement : \`python -m eval.enrichir lister \| verser <id> --clauses …\`.` |
+| `promotion, rollback FAIT — SP3 ; surveillance en STUB, SP4], dashboard.py [STUB]` | `promotion, rollback FAIT — SP3 ; surveiller, piloter FAIT — SP4], dashboard.py, pilotage.py, signaux.py, seuils.py [FAIT — SP4]` |
+| `acceptance/ (10 tests du brief : 8 verts, 2 en attente du sous-projet 4)` | `acceptance/ (10 tests du brief : verts)` |
+
+Ajouter aussi `capture.py [SP4]` à la ligne `app/` et `enrichir.py [SP4]` à la ligne `eval/` de l'arborescence, et « observabilité » à la liste `superpowers/specs/ et superpowers/plans/`.
+
+- [ ] **Step 5: Vérification finale**
 
 Run: `MOCK=on uv run pytest -q && MOCK=on uv run pytest -v tests/acceptance && uv run ruff check . && docker compose config --services`
 Expected: toute la suite verte ; **les 10 tests d'acceptance verts** ; ruff propre ; `docker compose config --services` liste `app`, `proxy`, `dashboard`, `pilote`. Puis jouer les trois scénarios de l'étape 3 et coller les extraits réels dans `exploitation.md`.
 
-- [ ] **Step 5: Commit et PR**
+- [ ] **Step 6: Commit et PR**
 
 ```bash
-git add docker-compose.yml Makefile docs/exploitation.md
+git add docker-compose.yml Makefile docs/exploitation.md .github/workflows/promotion.yml README.md
 git commit -m "feat(ops): service pilote, cible make pilote et procédure de démo des trois boucles
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
-git push -u origin feature/observabilite-b
-gh pr create --draft --title "Observabilité — phase B : surveillance, rollback auto, promotion pilotée (sous-projet 4)" \
-  --body "Phase B du sous-projet 4 (spec docs/superpowers/specs/2026-09-22-observabilite-design.md). Les 10 tests d'acceptance sont verts ; démo des trois boucles consignée dans docs/exploitation.md §7.
+git push
+gh pr create --draft --title "Observabilité & boucles de rétroaction (sous-projet 4)" \
+  --body "Sous-projet 4 (spec docs/superpowers/specs/2026-09-22-observabilite-design.md) : dashboard par version, surveillance avec rollback automatique, promotion canary pilotée par les métriques, capture et versement des cas à faible confiance, journal de pilotage en langage métier. Les 10 tests d'acceptance sont verts ; démo des trois boucles consignée dans docs/exploitation.md §7.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
