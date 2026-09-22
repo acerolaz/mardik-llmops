@@ -1,0 +1,39 @@
+# Rollback en une action : retire le canary en cours, sinon revient à la version
+# précédente (N-1, déjà dans le registre de prod : ni artefact ni rebuild).
+#   gh workflow run rollback.yml -f motif="dérive du score de confiance"
+
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      motif:
+        description: "Pourquoi revenir en arrière (inscrit au journal)"
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: [self-hosted, mardik]
+    environment: production
+    concurrency:
+      group: mardik-production
+      cancel-in-progress: false
+    env:
+      REGISTRY_PATH: ${{ vars.MARDIK_REGISTRY_PATH }}
+      MARDIK_APP_URL: ${{ vars.MARDIK_APP_URL || 'http://localhost:8000' }}
+      MOTIF: ${{ inputs.motif }}
+      ORIGINE: ci:${{ github.actor }}
+    steps:
+      - name: Préconditions
+        run: |
+          if [ -z "$REGISTRY_PATH" ]; then echo "::error::variable MARDIK_REGISTRY_PATH absente"; exit 1; fi
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - name: Rollback
+        run: uv run python -m ops.deploy rollback --motif "$MOTIF" --origine "$ORIGINE"
+      - name: État vu par la gateway
+        run: curl -sf "$MARDIK_APP_URL/gateway/etat"
