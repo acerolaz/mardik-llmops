@@ -55,7 +55,7 @@ curl -s localhost:8000/v1/analyse -H 'content-type: application/json' \
      -d @<(jq -Rs '{texte: .}' eval/contrats/c12.txt) | jq '.tronque, .clauses'
 
 python scripts/client_v1.py  # le client historique : vert
-make test-acceptance         # 8 verts, 2 rouges (sous-projet 4) ; 1 vert, 9 rouges au départ
+make test-acceptance         # 10 verts ; 1 vert, 9 rouges au départ
 ```
 
 ```bash
@@ -73,18 +73,19 @@ curl -si localhost:8000/analyse -H 'content-type: application/json' \
 | `make test` | tout, en `MOCK=on` |
 | `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement et des workflows (verts) |
 | `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway et de la CLI de déploiement (verts) |
-| `make test-acceptance` | les 10 tests du brief (8 verts, 2 en attente du sous-projet 4) |
+| `make test-acceptance` | les 10 tests du brief (verts) |
 | `make etat` | répartition courante du trafic vue par la gateway (`APP_URL`, défaut `http://localhost:8000`) |
 | `make eval VERSION=v2` | le gate d'évaluation sur le **vrai** modèle (`ARGS="--essais 3"`) |
 | `make traffic MODE=derive-score` | trafic sur la gateway + dérive commandée (`normal`, `derive-latence`, `erreurs`) |
 | `make dashboard` | tableau de bord (texte) ; `DASH=serve` pour la page HTML |
+| `make pilote` | boucle du pilote : surveillance, rollback automatique, promotion canary |
 | `make ci` | l'équivalent local du workflow GitHub (le gate MOCK passe avant l'acceptance) |
 | `make fixtures` | (ré)enregistre les fixtures `MOCK` avec le vrai modèle |
 
 Gate : `python -m eval.run_eval --version v2 [--essais 3] [--sortie rapport.json]` (seuils :
 `eval/seuils.yaml`).
 
-Déploiement : `python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport rapport.json] | installer v2.0.0 --depuis DOSSIER [--origine ci:acteur] | canary v2.0.0 --pourcentage 10 [--origine ci:acteur] | promouvoir v2.0.0 [--origine ci:acteur] | rollback [--motif M] [--origine ci:acteur] | surveiller --boucle`.
+Déploiement : `python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport rapport.json] | installer v2.0.0 --depuis DOSSIER [--origine ci:acteur] | canary v2.0.0 --pourcentage 10 [--origine ci:acteur] | promouvoir v2.0.0 [--origine ci:acteur] | rollback [--motif M] [--origine ci:acteur] | surveiller [--boucle] | piloter [--tours N]`. Seuils : `ops/seuils_pilotage.yaml` ; calibration : `python -m ops.seuils calibrer --version vX.Y.Z` ; enrichissement : `python -m eval.enrichir lister | verser <id> --clauses …`.
 
 En production, canary, promotion et rollback passent par la chaîne, jamais à
 la main : `ci.yml` (installation + 10 %), `promotion.yml` (50 %, 100 %) et
@@ -96,19 +97,21 @@ runner auto-hébergé. Procédure : `docs/exploitation.md` §4 et §5.
 ```
 app/          main.py (FastAPI, handler 413), api_v1.py [INTOUCHABLE], api_v2.py [FAIT — v2.0.0],
               gateway.py [FAIT — routage canary, SP3], routage.py [FAIT — SP3],
-              llm_client.py [FOURNI], telemetry.py [FOURNI]
+              llm_client.py [FOURNI], telemetry.py [FOURNI], capture.py [SP4]
 app/pipeline/ decoupage.py, extraction.py, consolidation.py, confiance.py, erreurs.py [FAIT — v2.0.0]
 models/       v1/config.yaml [FOURNI], v2/config.yaml [FAIT — bundle map_reduce_clauses]
 eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), seuils.yaml [FAIT],
-              run_eval.py [FAIT — gate], history.jsonl, rapport.json [GÉNÉRÉS]
+              run_eval.py [FAIT — gate], history.jsonl, rapport.json [GÉNÉRÉS], enrichir.py [SP4]
 ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier, installer, canary,
-              promotion, rollback FAIT — SP3 ; surveillance en STUB, SP4], dashboard.py [STUB]
+              promotion, rollback FAIT — SP3 ; surveiller, piloter FAIT — SP4], dashboard.py, pilotage.py,
+              signaux.py, seuils.py [FAIT — SP4]
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
 tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows),
               integration/ (v1 + v2 + gate + publication + gateway + cli_deploy),
-              acceptance/ (10 tests du brief : 8 verts, 2 en attente du sous-projet 4)
+              acceptance/ (10 tests du brief : verts)
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [FAIT — SP3],
-              superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication et routage/déploiement)
+              superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication, routage/déploiement,
+              observabilité)
 .github/      workflows/ci.yml — gates (MOCK + release), build, publication, canary (installation + 10 %) ;
               promotion.yml (50 %, 100 %) et rollback.yml — pilotage manuel
 ```

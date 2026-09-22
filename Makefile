@@ -1,4 +1,4 @@
-.PHONY: install up down serve proxy dashboard etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
+.PHONY: install up down serve proxy dashboard pilote etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
 
 MODE ?= normal
 VERSION ?= v2
@@ -25,6 +25,9 @@ proxy:              ## proxy de dérive en local
 dashboard:          ## tableau de bord en local (texte) — DASH=serve pour la page HTML
 	uv run python -m ops.dashboard $(if $(filter serve,$(DASH)),--serve,)
 
+pilote:             ## boucle du pilote en local : surveillance, rollback auto, promotion canary
+	uv run python -m ops.deploy piloter
+
 etat:               ## répartition du trafic vue par la gateway (GET /gateway/etat, APP_URL)
 	@curl -sf $(APP_URL)/gateway/etat && echo
 
@@ -37,7 +40,7 @@ test-unit:          ## pipeline v2, gate, versions, routage, transitions de dép
 test-integration:   ## remédiation + v2 + gate + publication + gateway + CLI de déploiement : verts
 	MOCK=on uv run pytest -q tests/integration
 
-test-acceptance:    ## les 10 tests du brief : 9 verts, 1 rouge (rollback automatique, sous-projet 4)
+test-acceptance:    ## les 10 tests du brief : tous verts
 	MOCK=on uv run pytest -v tests/acceptance
 
 eval:               ## gate sur le VRAI modèle, seuils de eval/seuils.yaml (VERSION=v2, ARGS="--essais 3 --sortie eval/rapport.json")
