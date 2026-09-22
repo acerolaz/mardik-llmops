@@ -158,3 +158,15 @@ def test_journal_illisible_pendant_un_rechargement_de_seuils(registry, metriques
 
     registry.journal = journal_capricieux            # type: ignore[method-assign]
     assert piloter(registry, metriques, tours=2, charger=charger, attendre=lambda _: None) == 2
+
+
+def test_canary_sans_debut_de_palier_journalise_un_refus(registry, metriques):
+    """Index avec canary mais journal sans entrée « canary » : le blocage est tracé."""
+    registry.etiqueter("v2.0.0", Bundle.charger("v2"), commit="abc1234", note_eval=0.9)
+    registry.definir_canary("v2.0.0", 10)          # aucune entrée « canary » au journal
+
+    piloter(registry, metriques, tours=2, attendre=lambda _: None)
+    refus = _evenements(registry, "pilotage_refus")
+    assert len(refus) == 1                          # une seule fois par fenêtre
+    assert refus[0]["action"] == "palier" and refus[0]["origine"] == "auto"
+    assert "palier" in refus[0]["resume"]

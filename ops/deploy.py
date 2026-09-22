@@ -609,6 +609,17 @@ def tour(
     index = registry.index()
     canary = index.get("canary")
     debut = debut_palier(registry.journal(), canary) if canary else None
+
+    if canary is not None and debut is None:
+        # Canary à l'index, mais aucun début de palier au journal (journal perdu
+        # ou tronqué) : sans trace, la version resterait figée sans explication.
+        raison = "aucun début de palier au journal (journal perdu ou tronqué)"
+        _journaliser_une_fois(
+            registry, "pilotage_refus", seuils.fenetre_s,
+            {"version": canary, "action": "palier"},
+            raison=raison,
+            resume=resume_metier("pilotage_refus", action="palier", raison=raison),
+        )
     if canary is None or debut is None:
         return {"surveillance": surveillance, "palier": None}
 
