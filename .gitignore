@@ -27,6 +27,7 @@ eval/history.jsonl
 eval/rapport.json
 eval/.metrics_eval.jsonl
 ops/metrics.jsonl
+eval/candidats.jsonl
 ops/registry/journal.jsonl
 ops/registry/index.lock
 ops/registry/index.json.tmp
