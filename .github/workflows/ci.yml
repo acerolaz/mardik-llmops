@@ -150,8 +150,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: gate-reel
-          path: eval
-      - name: Rapport du gate CI (MOCK)
+          path: .
         if: needs.gate-release.result != 'success'
         uses: actions/download-artifact@v4
         with:
