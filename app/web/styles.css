@@ -54,7 +54,7 @@ body {
 h1, h2, h3 { font-family: var(--police-titre); font-weight: 600; line-height: 1.2; margin: 0 0 .5rem; }
 h1 { font-size: 1.6rem; } h2 { font-size: 1.3rem; } h3 { font-size: 1.1rem; }
 a { color: var(--primary); }
-code { font-size: .9em; background: var(--muted); padding: .1em .35em; border-radius: 4px; }
+code { font-size: .9em; color: var(--fg); background: var(--muted); padding: .1em .35em; border-radius: 4px; }
 main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 24px; }
 :focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 
