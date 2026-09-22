@@ -4,7 +4,8 @@ from __future__ import annotations
 import pytest
 
 from app.llm_client import Bundle
-from ops.deploy import ErreurDeploiement, deployer_canary, promouvoir, rollback
+from ops.deploy import ErreurDeploiement, deployer_canary, installer, promouvoir, rollback
+from ops.registry import Registry
 
 
 def test_ecriture_atomique_de_l_index(registry, monkeypatch):
@@ -148,3 +149,49 @@ def test_rollback_revient_a_la_precedente_une_seule_fois(registry):
 def test_rollback_sans_rien_a_annuler(registry):
     with pytest.raises(ErreurDeploiement, match="rien à annuler"):
         rollback(registry)
+
+
+# --------------------------------------------------------------- installer
+def _artefact(tmp_path, version="v2.0.0"):
+    """Dossier de version tel que la CI l'envoie en artefact (registre du runner)."""
+    runner = Registry(tmp_path / "runner")
+    runner.etiqueter(version, Bundle.charger("v2"), commit="abc1234", note_eval=0.9)
+    return runner.root / version
+
+
+def test_installer_copie_et_journalise(registry, tmp_path):
+    avant = registry.index()
+    manifeste = installer("v2.0.0", _artefact(tmp_path), registry, origine="ci:bot")
+    assert manifeste["version"] == "v2.0.0"
+    assert "v2.0.0" in registry.versions()
+    assert registry.bundle("v2.0.0").strategie == "map_reduce_clauses"
+    entree = registry.journal()[-1]
+    assert entree["evenement"] == "installation"
+    assert (entree["version"], entree["commit"], entree["origine"]) == (
+        "v2.0.0", "abc1234", "ci:bot"
+    )
+    assert registry.index() == avant
+
+
+def test_installer_est_idempotent(registry, tmp_path):
+    dossier = _artefact(tmp_path)
+    installer("v2.0.0", dossier, registry)
+    journal = registry.journal()
+    assert installer("v2.0.0", dossier, registry)["version"] == "v2.0.0"
+    assert registry.journal() == journal
+
+
+def test_installer_refuse_une_autre_empreinte(registry, tmp_path):
+    registry.etiqueter("v2.0.0", Bundle.charger("v1"), commit="autre", note_eval=None)
+    with pytest.raises(ErreurDeploiement, match="immuable"):
+        installer("v2.0.0", _artefact(tmp_path), registry)
+
+
+def test_installer_sans_manifeste(registry, tmp_path):
+    with pytest.raises(ErreurDeploiement, match="manifeste introuvable"):
+        installer("v2.0.0", tmp_path, registry)
+
+
+def test_installer_version_incoherente(registry, tmp_path):
+    with pytest.raises(ErreurDeploiement, match="décrit 'v2.0.0', pas v2.0.1"):
+        installer("v2.0.1", _artefact(tmp_path), registry)

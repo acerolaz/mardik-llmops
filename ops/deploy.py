@@ -45,6 +45,7 @@ import argparse
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -361,6 +362,51 @@ def rollback(
         return {**index, "active": precedente, "precedente": None}
 
     return _transition(registry, "rollback", calcul, origine=origine, motif=motif)
+
+
+def installer(
+    version: str,
+    depuis: Path | str,
+    registry: Registry | None = None,
+    *,
+    origine: str = "manuel",
+) -> dict[str, Any]:
+    """Installe dans ce registre une version publiée ailleurs (artefact CI
+    ``mardik-vX.Y.Z``). Idempotent à empreinte égale ; un tag reste immuable."""
+    registry = registry or Registry()
+    depuis = Path(depuis)
+    if not MOTIF_VERSION.match(version):
+        raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
+    chemin = depuis / "manifest.json"
+    try:
+        manifeste = json.loads(chemin.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ErreurDeploiement(f"manifeste introuvable : {chemin}") from exc
+    except json.JSONDecodeError as exc:
+        raise ErreurDeploiement(f"manifeste illisible : {chemin} ({exc})") from exc
+    if not isinstance(manifeste, dict) or manifeste.get("version") != version:
+        decrit = manifeste.get("version") if isinstance(manifeste, dict) else None
+        raise ErreurDeploiement(f"le manifeste de {depuis} décrit {decrit!r}, pas {version}")
+
+    with _verrou(registry):
+        if version in registry.versions():
+            installe = registry.manifest(version)
+            if installe.get("empreinte") != manifeste.get("empreinte"):
+                raise ErreurDeploiement(
+                    f"{version} déjà installée avec l'empreinte {installe.get('empreinte')} "
+                    f"≠ {manifeste.get('empreinte')} : un tag est immuable"
+                )
+            return installe
+        shutil.copytree(depuis, registry.root / version)
+        registry.journaliser(
+            "installation",
+            version=version,
+            commit=manifeste.get("commit"),
+            note_eval=manifeste.get("note_eval"),
+            empreinte=manifeste.get("empreinte"),
+            origine=origine,
+        )
+    return manifeste
 
 
 def surveiller(
