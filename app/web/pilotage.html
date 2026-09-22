@@ -4,9 +4,64 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mardik — Pilotage</title>
+  <meta name="description" content="Tableau de bord complet du déploiement Mardik : trafic, canary, latence, score, journal.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/pilotage.js"></script>
 </head>
 <body>
-  <div id="versions"></div>
+  <header class="entete">
+    <a class="marque" href="/"><span id="logo"></span>Mardik</a>
+    <nav class="nav" aria-label="Navigation principale">
+      <a href="/">Analyse</a>
+      <a href="/pilotage" aria-current="page">Pilotage</a>
+    </nav>
+    <button id="theme" class="bouton bouton-fantome" type="button" aria-label="Changer de thème"></button>
+  </header>
+  <main>
+    <div class="barre-maj">
+      <h1 class="titre-page">Pilotage</h1>
+      <span id="fenetre" class="chiffre"></span>
+      <span id="maj" aria-live="off">en attente…</span>
+      <button id="pause" class="bouton" type="button" aria-pressed="false">Pause</button>
+    </div>
+
+    <section class="carte" aria-labelledby="t-alertes">
+      <h2 id="t-alertes">Alertes</h2>
+      <div id="alertes" aria-live="polite"><p class="vide">Chargement…</p></div>
+    </section>
+
+    <section class="carte" aria-labelledby="t-trafic">
+      <h2 id="t-trafic">Part de trafic</h2>
+      <div id="trafic"></div>
+    </section>
+
+    <div class="grille-2">
+      <section class="carte" aria-labelledby="t-palier">
+        <h2 id="t-palier">Palier canary</h2>
+        <div id="palier" aria-live="polite"></div>
+      </section>
+      <section class="carte" aria-labelledby="t-candidats">
+        <h2 id="t-candidats">Candidats à verser</h2>
+        <p id="candidats" class="compteur">—</p>
+        <p class="legende">Analyses v2 à faible confiance capturées, en attente de relecture (<code>make candidats</code>).</p>
+      </section>
+    </div>
+
+    <section aria-labelledby="t-versions">
+      <h2 id="t-versions">Par version</h2>
+      <div id="versions" class="versions"></div>
+    </section>
+
+    <section class="carte" aria-labelledby="t-journal">
+      <h2 id="t-journal">Journal de pilotage</h2>
+      <div class="table-defilante">
+        <table>
+          <thead><tr><th scope="col">Date</th><th scope="col">Événement</th><th scope="col">Origine</th><th scope="col">Résumé</th></tr></thead>
+          <tbody id="journal"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
 </body>
 </html>
