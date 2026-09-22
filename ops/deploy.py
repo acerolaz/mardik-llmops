@@ -70,9 +70,22 @@ from typing import Any
 from app.llm_client import Bundle
 from app.telemetry import MetricsStore
 from eval.run_eval import Rapport, evaluer
-from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
+from ops.pilotage import (
+    changements_seuils,
+    debut_palier,
+    detecter_derive,
+    evaluer_palier,
+    resume_metier,
+    version_surveillee,
+)
 from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry
-from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
+from ops.seuils import (
+    ErreurSeuilsPilotage,
+    SeuilsPilotage,
+    charger_seuils_pilotage,
+    chemin_seuils_gate,
+    chemin_seuils_pilotage,
+)
 from ops.signaux import filtrer
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -544,6 +557,115 @@ def surveiller(
     return resultat
 
 
+def fichiers_seuils() -> dict[str, Path]:
+    """Les deux fichiers de seuils suivis au journal (pilotage et gate)."""
+    return {
+        "ops/seuils_pilotage.yaml": chemin_seuils_pilotage(),
+        "eval/seuils.yaml": chemin_seuils_gate(),
+    }
+
+
+def _journaliser_seuils(registry: Registry, seuils: SeuilsPilotage) -> None:
+    try:
+        evenements = changements_seuils(registry.journal(), fichiers_seuils())
+    except ErreurSeuilsPilotage as exc:
+        _journaliser_une_fois(
+            registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
+            fichier="seuils",
+            resume=resume_metier("seuils_invalides", fichier="seuils", raison=str(exc)),
+        )
+        return
+    for ev in evenements:
+        registry.journaliser("seuils", origine="auto", **ev,
+                             resume=resume_metier("seuils", **ev))
+
+
+def tour(
+    registry: Registry, metriques: MetricsStore, seuils: SeuilsPilotage
+) -> dict[str, Any]:
+    """Une tour du pilote : seuils → surveillance → palier. Relit tout, ne garde rien."""
+    _journaliser_seuils(registry, seuils)
+    surveillance = surveiller(registry, metriques, seuils=seuils)
+    if surveillance["rollback"]:
+        return {"surveillance": surveillance, "palier": None}
+    index = registry.index()
+    canary = index.get("canary")
+    debut = debut_palier(registry.journal(), canary) if canary else None
+    if canary is None or debut is None:
+        return {"surveillance": surveillance, "palier": None}
+
+    maintenant = time.time()
+    depuis_s = maintenant - debut
+    mesures = metriques.lire(depuis_s=depuis_s + 1)
+    decision = evaluer_palier(
+        canary,
+        filtrer(mesures, canary, depuis_ts=debut),
+        filtrer(mesures, index.get("active") or "", depuis_ts=debut),
+        seuils,
+        depuis_s=depuis_s,
+        pourcentage=int(index.get("canary_percent") or 0),
+    )
+    details = {
+        "motif": decision.motif,
+        "constats": [c.to_dict() for c in decision.constats],
+        "requetes": decision.requetes,
+        "depuis_s": round(decision.depuis_s, 1),
+    }
+    try:
+        if decision.action == "progresser":
+            deployer_canary(
+                canary, decision.pourcentage_suivant, registry, origine="auto",
+                resume=resume_metier("canary", version=canary,
+                                     pourcentage=decision.pourcentage_suivant,
+                                     requetes=decision.requetes, depuis_s=decision.depuis_s),
+                **details,
+            )
+        elif decision.action == "promouvoir":
+            promouvoir(canary, registry, origine="auto",
+                       resume=resume_metier("promotion", version=canary), **details)
+    except ErreurDeploiement as exc:
+        _journaliser_une_fois(
+            registry, "pilotage_refus", seuils.fenetre_s,
+            {"version": canary, "action": decision.action},
+            raison=str(exc),
+            resume=resume_metier("pilotage_refus", action=decision.action, raison=str(exc)),
+        )
+    return {"surveillance": surveillance,
+            "palier": {"action": decision.action, "motif": decision.motif}}
+
+
+def piloter(
+    registry: Registry | None = None,
+    metriques: MetricsStore | None = None,
+    *,
+    tours: int | None = None,
+    attendre: Callable[[float], None] = time.sleep,
+    charger: Callable[[], SeuilsPilotage] = charger_seuils_pilotage,
+) -> int:
+    """Boucle du pilote (service ``pilote``). Seuils invalides au démarrage →
+    ``ErreurSeuilsPilotage`` ; en cours de route → derniers seuils valides."""
+    registry = registry or Registry()
+    metriques = metriques or MetricsStore()
+    seuils = charger()
+    joues = 0
+    while tours is None or joues < tours:
+        if joues:
+            try:
+                seuils = charger()
+            except ErreurSeuilsPilotage as exc:
+                _journaliser_une_fois(
+                    registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
+                    fichier="ops/seuils_pilotage.yaml",
+                    resume=resume_metier("seuils_invalides",
+                                         fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
+                )
+        tour(registry, metriques, seuils)
+        joues += 1
+        if tours is None or joues < tours:
+            attendre(seuils.intervalle_s)
+    return joues
+
+
 def _afficher(donnees: dict[str, Any]) -> None:
     print(json.dumps(donnees, ensure_ascii=False, indent=2))
 
@@ -573,6 +695,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--boucle", action="store_true")
     s.add_argument("--intervalle", type=float, default=5.0)
     s.add_argument("--fenetre", type=float, default=None)
+    pl = sub.add_parser("piloter", help="boucle du pilote : surveillance + promotion")
+    pl.add_argument("--tours", type=int, default=None, help="nombre de tours (défaut : infini)")
     for commande in (i, c, pr, r):
         commande.add_argument("--origine", default="manuel",
                               help="manuel | ci:<acteur> | auto")
@@ -610,6 +734,8 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.boucle or res["rollback"]:
                     break
                 time.sleep(args.intervalle)
+        elif args.commande == "piloter":
+            piloter(tours=args.tours)
     except ErreurDeploiement as exc:
         print(f"REFUSÉ : {exc}", file=sys.stderr)
         return 1
