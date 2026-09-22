@@ -159,12 +159,24 @@ def evaluer_palier(
         ref_erreur = seuils.derive.taux_erreur_max
     constats = (
         Constat("taux_erreur", c.taux_erreur, ref_erreur, c.taux_erreur <= ref_erreur),
-        Constat("latence_p95_ms", c.latence_p95_ms, p.latence_p95_max_ms,
-                c.latence_p95_ms is not None and c.latence_p95_ms < p.latence_p95_max_ms),
-        Constat("score_moyen", c.score_moyen, p.score_moyen_min,
-                c.score_moyen is not None and c.score_moyen >= p.score_moyen_min),
-        Constat("score_p10", c.score_p10, p.score_p10_min,
-                c.score_p10 is not None and c.score_p10 >= p.score_p10_min),
+        Constat(
+            "latence_p95_ms",
+            c.latence_p95_ms,
+            p.latence_p95_max_ms,
+            c.latence_p95_ms is not None and c.latence_p95_ms <= p.latence_p95_max_ms,
+        ),
+        Constat(
+            "score_moyen",
+            c.score_moyen,
+            p.score_moyen_min,
+            c.score_moyen is not None and c.score_moyen >= p.score_moyen_min,
+        ),
+        Constat(
+            "score_p10",
+            c.score_p10,
+            p.score_p10_min,
+            c.score_p10 is not None and c.score_p10 >= p.score_p10_min,
+        ),
     )
     echec = next((x for x in constats if not x.ok), None)
     if echec is not None:
