@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from app.llm_client import Bundle
 from app.pilotage import ResumePilotage
 from app.telemetry import Mesure
@@ -62,3 +64,25 @@ def test_resume_registre_illisible(client, registry):
 
     assert r.status_code == 200
     assert any("registre illisible" in a for a in r.json()["alertes"])
+
+
+@pytest.mark.parametrize("chemin, marqueur", [
+    ("/", 'id="form-analyse"'),
+    ("/pilotage", 'id="versions"'),
+])
+def test_pages_servies(client, chemin, marqueur):
+    r = client.get(chemin)
+
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert marqueur in r.text
+    assert "/static/styles.css" in r.text
+
+
+@pytest.mark.parametrize("chemin", ["/static/styles.css", "/exemples/c02.txt", "/exemples/c07.txt"])
+def test_fichiers_statiques(client, chemin):
+    assert client.get(chemin).status_code == 200
+
+
+def test_exemples_hors_dossier_refuses(client):
+    assert client.get("/exemples/../../app/main.py").status_code == 404
