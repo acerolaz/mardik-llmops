@@ -590,9 +590,11 @@ def tour(
     surveillance = surveiller(registry, metriques, seuils=seuils)
     if surveillance["rollback"]:
         return {"surveillance": surveillance, "palier": None}
-    index = registry.index()
+    with _verrou(registry):
+        index = registry.index()
+        journal = registry.journal()
     canary = index.get("canary")
-    debut = debut_palier(registry.journal(), canary) if canary else None
+    debut = debut_palier(journal, canary) if canary else None
     if canary is None or debut is None:
         if canary is not None:   # sans trace, la version resterait figée sans explication
             raison = "aucun début de palier au journal (journal perdu ou tronqué)"
