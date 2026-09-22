@@ -67,6 +67,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from app.llm_client import Bundle
 from app.telemetry import MetricsStore
 from eval.run_eval import Rapport, evaluer
@@ -659,7 +661,13 @@ def piloter(
                     resume=resume_metier("seuils_invalides",
                                          fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
                 )
-        tour(registry, metriques, seuils)
+        try:
+            tour(registry, metriques, seuils)
+        except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
+            # Incident transitoire (registre/métriques) : on journalise et on
+            # continue la boucle plutôt que de faire sortir le pilote (spec :
+            # seul un seuil invalide AU DÉMARRAGE doit l'arrêter).
+            structlog.get_logger("mardik").warning("pilotage.incident", cause=str(exc))
         joues += 1
         if tours is None or joues < tours:
             attendre(seuils.intervalle_s)

@@ -39,7 +39,7 @@ def test_resume_complet(metriques, registry, tmp_path):
     assert v2["serie_minute"] and v2["cout_total_eur"] > 0
     assert r["palier"] == {"version": "v2.0.0", "pourcentage": 10, "depuis_s": 42.0,
                            "requetes": 12, "duree_min_s": 60, "requetes_min": 20}
-    assert r["alertes"] == ["v2.0.0 : score moyen 0.72 dans la marge [0.70 ; 0.75["]
+    assert r["alertes"] == ["Version v2.0.0 à surveiller : score moyen 0,72, proche du seuil 0,70."]
     assert r["candidats"] == 1
     assert r["journal"][-1]["evenement"] == "canary"
 
@@ -57,6 +57,49 @@ def test_seuils_invalides_signales_sans_bloquer(metriques, registry, monkeypatch
     r = resume(metriques, registry=registry)
     assert r["par_version"]["v1.0.0"]["requetes"] == 3
     assert r["alertes"][0].startswith("seuils invalides")
+    assert r["fenetre_s"] == 300           # seuils invalides → repli sur 300 s
+
+
+def test_fenetre_par_defaut_suit_les_seuils(metriques, registry, monkeypatch, tmp_path):
+    """``fenetre_s`` non précisée : le tableau de bord suit ``ops/seuils_pilotage.yaml``,
+    comme le pilote (``ops.deploy.surveiller``) — même fenêtre affichée que celle décidée."""
+    from ops.seuils import CHEMIN_SEUILS_PILOTAGE_DEFAUT
+
+    chemin = tmp_path / "seuils_pilotage.yaml"
+    chemin.write_text(
+        CHEMIN_SEUILS_PILOTAGE_DEFAUT.read_text(encoding="utf-8")
+        .replace("fenetre_s: 300", "fenetre_s: 120"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PILOTAGE_SEUILS_PATH", str(chemin))
+    r = resume(metriques, registry=registry)
+    assert r["fenetre_s"] == 120
+
+
+def test_fenetre_explicite_l_emporte_sur_les_seuils(metriques, registry, monkeypatch, tmp_path):
+    from ops.seuils import CHEMIN_SEUILS_PILOTAGE_DEFAUT
+
+    chemin = tmp_path / "seuils_pilotage.yaml"
+    chemin.write_text(
+        CHEMIN_SEUILS_PILOTAGE_DEFAUT.read_text(encoding="utf-8")
+        .replace("fenetre_s: 300", "fenetre_s: 120"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PILOTAGE_SEUILS_PATH", str(chemin))
+    r = resume(metriques, fenetre_s=60, registry=registry)
+    assert r["fenetre_s"] == 60
+
+
+def test_alerte_derive_critique_en_langage_metier(metriques, registry):
+    """La dérive critique (rollback déclenché par ops.deploy.surveiller) est aussi
+    signalée ici, en phrase métier — pas le motif technique brut."""
+    _canary(registry)
+    _mesures(metriques, "v2.0.0", 12, score=0.3)     # sous le seuil dur (0.70)
+    r = resume(metriques, registry=registry)
+    assert len(r["alertes"]) == 1
+    assert r["alertes"][0].startswith("Version v2.0.0 en dérive critique : score moyen")
+    assert "0,30" in r["alertes"][0]
+    assert "[" not in r["alertes"][0]                # plus la forme technique "dans la marge [...]"
 
 
 def test_rendre_texte(metriques, registry):

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections.abc import Iterable
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.capture import candidats_en_attente, chemin_candidats, lire_candidats
+from app.capture import _verrouille, candidats_en_attente, chemin_candidats, lire_candidats
 from app.llm_client import TYPES_CLAUSES
 from eval.run_eval import CHEMIN_ATTENDUS, DOSSIER_CONTRATS, charger_attendus
 from ops.pilotage import resume_metier
@@ -40,6 +41,15 @@ def _ajouter_ligne(chemin: Path, data: dict[str, Any]) -> None:
     separateur = "" if not contenu or contenu.endswith("\n") else "\n"
     with chemin.open("a", encoding="utf-8") as f:
         f.write(separateur + json.dumps(data, ensure_ascii=False) + "\n")
+
+
+def _ajouter_ligne_verrouillee(chemin: Path, data: dict[str, Any]) -> None:
+    """Comme ``_ajouter_ligne``, mais sous le même verrou (``fcntl``) que la
+    capture (``app.capture._verrouille``) : ``candidats.jsonl`` est écrit par
+    les deux à la fois."""
+    with _verrouille(chemin) as fichier:
+        fichier.seek(0, os.SEEK_END)
+        fichier.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 
 def verser(
@@ -85,7 +95,7 @@ def verser(
     }
     fichier.write_text(texte, encoding="utf-8")
     _ajouter_ligne(Path(attendus), ligne)
-    _ajouter_ligne(chemin, {
+    _ajouter_ligne_verrouillee(chemin, {
         "type": "verse",
         "id": id_candidat,
         "contrat_id": contrat_id,

@@ -43,6 +43,7 @@ services:
       REGISTRY_PATH: /app/ops/registry
     volumes:
       - ./ops:/app/ops
+      - ./eval:/app/eval        # candidats.jsonl : compteur « candidats à verser »
     depends_on:
       - app
 
@@ -51,6 +52,7 @@ services:
   pilote:
     build: .
     command: python -m ops.deploy piloter
+    restart: unless-stopped   # une tour en échec (I/O transitoire) ne doit pas arrêter le pilote
     env_file: .env
     environment:
       METRICS_PATH: /app/ops/metrics.jsonl

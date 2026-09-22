@@ -106,3 +106,31 @@ def test_seuils_invalides_au_demarrage(registry, metriques, tmp_path, monkeypatc
         piloter(registry, metriques, tours=1)
     assert main(["piloter", "--tours", "1"]) == 1
     assert "SEUILS INVALIDES" in capsys.readouterr().err
+
+
+class _MetriquesCassees:
+    """Enveloppe un ``MetricsStore`` réel : lève ``OSError`` au premier ``lire``
+    (panne transitoire simulée), délègue ensuite normalement."""
+
+    def __init__(self, reelles):
+        self._reelles = reelles
+        self._appels = 0
+
+    def lire(self, *args, **kwargs):
+        self._appels += 1
+        if self._appels == 1:
+            raise OSError("panne disque simulée")
+        return self._reelles.lire(*args, **kwargs)
+
+    def enregistrer(self, *args, **kwargs):
+        return self._reelles.enregistrer(*args, **kwargs)
+
+
+def test_pilote_survit_a_une_panne_transitoire(registry, metriques):
+    """Une ``OSError`` (ou ``ErreurRegistre``/``json.JSONDecodeError``) levée pendant une
+    tour ne doit pas arrêter le pilote (aucun service n'a de politique de redémarrage
+    autre que ``restart: unless-stopped`` — le service doit rester en vie tout seul) :
+    seuls des seuils invalides AU DÉMARRAGE doivent l'arrêter."""
+    fausses = _MetriquesCassees(metriques)
+    assert piloter(registry, fausses, tours=2, charger=_rapides) == 2
+    assert fausses._appels >= 2

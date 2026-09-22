@@ -42,7 +42,7 @@ from typing import Any
 
 from app.capture import candidats_en_attente
 from app.telemetry import Mesure, MetricsStore
-from ops.pilotage import debut_palier, detecter_derive, version_surveillee
+from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
 from ops.registry import Registry
 from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
 from ops.signaux import agreger, filtrer, histogramme, scores, serie_par_minute
@@ -93,17 +93,18 @@ def _palier(
 def resume(
     metriques: MetricsStore | None = None,
     *,
-    fenetre_s: float = 300,
+    fenetre_s: float | None = None,
     registry: Registry | None = None,
     seuils: SeuilsPilotage | None = None,
     candidats: Path | None = None,
     maintenant: float | None = None,
 ) -> dict[str, Any]:
+    """``fenetre_s`` à ``None`` (défaut) : celle des seuils chargés (``ops/seuils_pilotage.yaml``),
+    sinon 300 s si les seuils sont invalides — même convention que ``ops.deploy.surveiller``,
+    pour que le tableau de bord affiche la même fenêtre que le pilote."""
     metriques = metriques or MetricsStore()
     registry = registry or Registry()
     maintenant = maintenant if maintenant is not None else time.time()
-    mesures = metriques.lire(depuis_s=fenetre_s)
-    index, journal = registry.index(), registry.journal()
 
     alertes: list[str] = []
     if seuils is None:
@@ -111,6 +112,10 @@ def resume(
             seuils = charger_seuils_pilotage()
         except ErreurSeuilsPilotage as exc:
             alertes.append(f"seuils invalides : {exc}")
+    fenetre = fenetre_s if fenetre_s is not None else (seuils.fenetre_s if seuils else 300)
+    mesures = metriques.lire(depuis_s=fenetre)
+    index, journal = registry.index(), registry.journal()
+
     surveillee = version_surveillee(index)
     if seuils is not None and surveillee is not None:
         debut = debut_palier(journal, surveillee) if index.get("canary") == surveillee else None
@@ -118,11 +123,20 @@ def resume(
             surveillee, filtrer(mesures, surveillee, depuis_ts=debut), seuils.derive,
             minimum=seuils.minimum,
         )
-        if derive.niveau in ("critique", "marge"):
-            alertes.append(f"{surveillee} : {derive.motif}")
+        if derive.niveau == "marge":
+            score = next(c for c in derive.constats if c.signal == "score_moyen")
+            alertes.append(resume_metier(
+                "alerte", version=surveillee, valeur=score.valeur, seuil=score.seuil,
+            ))
+        elif derive.niveau == "critique":
+            c = derive.principal
+            alertes.append(resume_metier(
+                "derive_critique", version=surveillee, signal=c.signal,
+                valeur=c.valeur, seuil=c.seuil,
+            ))
 
     return {
-        "fenetre_s": fenetre_s,
+        "fenetre_s": fenetre,
         "total": len(mesures),
         "par_version": _par_version(mesures),
         "palier": _palier(index, journal, mesures, seuils, maintenant),
@@ -290,7 +304,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Tableau de bord Mardik")
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--port", type=int, default=8501)
-    parser.add_argument("--fenetre", type=float, default=300)
+    parser.add_argument("--fenetre", type=float, default=None,
+                        help="défaut : celle des seuils de pilotage (sinon 300 s)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if args.serve:

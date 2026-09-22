@@ -259,6 +259,21 @@ def _resume_rollback(d: dict[str, Any]) -> str:
             f"(P95 {_fr(d['valeur'] / 1000, 1)} s, maximum {_fr(d['seuil'] / 1000, 1)} s).")
 
 
+def _resume_derive_critique(d: dict[str, Any]) -> str:
+    """Alerte tableau de bord pour une dérive critique — non journalisée comme un
+    ``rollback`` (aucune action n'est faite ici, contrairement à ``ops.deploy.surveiller``) :
+    même registre de phrase, sans affirmer un retrait."""
+    version, signal = d["version"], d["signal"]
+    if signal == "score_moyen":
+        return (f"Version {version} en dérive critique : score moyen {_fr(d['valeur'])} "
+                f"sous le seuil {_fr(d['seuil'])}.")
+    if signal == "taux_erreur":
+        return (f"Version {version} en dérive critique : {_pct(d['valeur'])} des analyses "
+                f"en échec (maximum toléré {_pct(d['seuil'])}).")
+    return (f"Version {version} en dérive critique : analyses trop lentes "
+            f"(P95 {_fr(d['valeur'] / 1000, 1)} s, maximum {_fr(d['seuil'] / 1000, 1)} s).")
+
+
 def _resume_seuils(d: dict[str, Any]) -> str:
     if d.get("avant") is None:
         return f"Seuils en vigueur ({d['fichier']}) : {d['motif']}."
@@ -268,6 +283,7 @@ def _resume_seuils(d: dict[str, Any]) -> str:
 
 _GABARITS = {
     "rollback": _resume_rollback,
+    "derive_critique": _resume_derive_critique,
     "canary": lambda d: (
         f"Version {d['version']} étendue à {d['pourcentage']} % des clients : "
         f"{d['requetes']} analyses conformes en {d['depuis_s']:.0f} s."
