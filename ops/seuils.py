@@ -119,7 +119,12 @@ def _section(data: dict[str, Any], cle: str, chemin: Path) -> dict[str, Any]:
 
 
 def _nombre(
-    section: dict[str, Any], cle: str, chemin: Path, prefixe: str = ""
+    section: dict[str, Any],
+    cle: str,
+    chemin: Path,
+    prefixe: str = "",
+    *,
+    strictement_positif: bool = False,
 ) -> float:
     nom = f"{prefixe}{cle}"
     if cle not in section:
@@ -128,6 +133,10 @@ def _nombre(
     if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
         raise ErreurSeuilsPilotage(
             f"{chemin} : « {nom} » doit être un nombre, reçu {valeur!r}"
+        )
+    if strictement_positif and valeur <= 0:
+        raise ErreurSeuilsPilotage(
+            f"{chemin} : « {nom} » doit être strictement positif, reçu {valeur!r}"
         )
     return float(valeur)
 
@@ -160,9 +169,9 @@ def charger_seuils_pilotage(chemin: Path | str | None = None) -> SeuilsPilotage:
     if not motif:
         raise ErreurSeuilsPilotage(f"{chemin} : clé « motif » manquante ou vide")
     return SeuilsPilotage(
-        fenetre_s=_nombre(data, "fenetre_s", chemin),
-        minimum=int(_nombre(data, "minimum", chemin)),
-        intervalle_s=_nombre(data, "intervalle_s", chemin),
+        fenetre_s=_nombre(data, "fenetre_s", chemin, strictement_positif=True),
+        minimum=int(_nombre(data, "minimum", chemin, strictement_positif=True)),
+        intervalle_s=_nombre(data, "intervalle_s", chemin, strictement_positif=True),
         derive=SeuilsDerive(
             score_min=_nombre(derive, "score_min", chemin, "derive."),
             marge=_nombre(derive, "marge", chemin, "derive."),

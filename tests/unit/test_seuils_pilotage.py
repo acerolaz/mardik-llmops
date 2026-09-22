@@ -60,6 +60,9 @@ def _sans(data: dict, section: str, cle: str) -> dict:
         (lambda d: {**d, "promotion": {**d["promotion"], "paliers": [10, 50]}}, "paliers"),
         (lambda d: {k: v for k, v in d.items() if k != "capture"}, "capture"),
         (lambda d: {**d, "motif": "  "}, "motif"),
+        (lambda d: {**d, "fenetre_s": 0}, "fenetre_s"),
+        (lambda d: {**d, "minimum": -1}, "minimum"),
+        (lambda d: {**d, "intervalle_s": 0}, "intervalle_s"),
     ],
 )
 def test_fichier_incoherent_refuse(tmp_path, modifier, attendu):
