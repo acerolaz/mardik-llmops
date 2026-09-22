@@ -8,13 +8,20 @@ et ``eval.run_eval`` importe ``app.api_v2`` (import circulaire sinon).
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from statistics import fmean, pstdev
 from typing import Any
 
 import yaml
+
+from app.telemetry import MetricsStore
+from ops.signaux import percentile, scores
 
 RACINE = Path(__file__).resolve().parent.parent
 CHEMIN_SEUILS_PILOTAGE_DEFAUT = RACINE / "ops" / "seuils_pilotage.yaml"
@@ -174,3 +181,63 @@ def charger_seuils_pilotage(chemin: Path | str | None = None) -> SeuilsPilotage:
         capture=SeuilsCapture(score_max=_nombre(capture, "score_max", chemin, "capture.")),
         motif=motif,
     )
+
+
+# ---------------------------------------------------------------- calibration
+def calibrer(
+    metriques: MetricsStore,
+    version: str,
+    *,
+    fenetre_s: float = 3600,
+    k: float = 1.5,
+    minimum: int = 30,
+    marge_p10: float = 0.05,
+) -> dict[str, Any]:
+    """Propose des seuils à partir de la distribution de production (C2.2, D7).
+
+    N'écrit rien : la proposition est reportée à la main dans
+    ``ops/seuils_pilotage.yaml`` par un commit dont le ``motif`` la cite.
+    """
+    valeurs = scores(metriques.lire(depuis_s=fenetre_s, version=version))
+    if len(valeurs) < minimum:
+        raise ErreurSeuilsPilotage(
+            f"échantillon insuffisant pour calibrer {version} : "
+            f"{len(valeurs)} scores < {minimum}"
+        )
+    moyenne = fmean(valeurs)
+    ecart = pstdev(valeurs)
+    p10 = percentile(valeurs, 10) or 0.0
+    return {
+        "version": version,
+        "mesures": len(valeurs),
+        "moyenne": round(moyenne, 4),
+        "ecart_type": round(ecart, 4),
+        "p10": round(p10, 4),
+        "k": k,
+        "score_min_propose": round(moyenne - k * ecart, 2),
+        "score_p10_min_propose": round(p10 - marge_p10, 2),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Seuils de pilotage Mardik")
+    sub = parser.add_subparsers(dest="commande", required=True)
+    c = sub.add_parser("calibrer", help="propose des seuils (n'écrit rien)")
+    c.add_argument("--version", required=True)
+    c.add_argument("--fenetre", type=float, default=3600)
+    c.add_argument("--k", type=float, default=1.5)
+    args = parser.parse_args(argv)
+    try:
+        r = calibrer(MetricsStore(), args.version, fenetre_s=args.fenetre, k=args.k)
+    except ErreurSeuilsPilotage as exc:
+        print(f"CALIBRATION IMPOSSIBLE : {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(r, ensure_ascii=False, indent=2))
+    print("\nProposition à reporter dans ops/seuils_pilotage.yaml (ce script n'écrit rien) :")
+    print(f"derive:\n  score_min: {r['score_min_propose']}")
+    print(f"promotion:\n  score_p10_min: {r['score_p10_min_propose']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
