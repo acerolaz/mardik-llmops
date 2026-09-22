@@ -35,6 +35,13 @@ entrée de journal ``{evenement, avant, apres, origine, …}``.
         Journalise ``rollback`` avec le motif.
 
     surveiller(...) -> dict                                   [sous-projet 4]
+        Dérive de la version surveillée (canary, sinon active) : seuils lus par
+        défaut dans ``ops/seuils_pilotage.yaml`` (paramètres explicites
+        prioritaires). Dérive critique → ``rollback`` automatique tracé
+        (``origine="auto"``) ; dérive de marge → journalise une ``alerte``
+        (une seule fois par fenêtre). Un rollback refusé (rien à annuler)
+        journalise ``pilotage_refus`` (une seule fois par fenêtre) au lieu de
+        lever.
 
 ``origine`` : ``manuel``, ``ci:<acteur GitHub>`` ou ``auto`` (surveillance).
 
@@ -56,13 +63,32 @@ import sys
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from app.llm_client import Bundle
 from app.telemetry import MetricsStore
 from eval.run_eval import Rapport, evaluer
+from ops.pilotage import (
+    changements_seuils,
+    debut_palier,
+    detecter_derive,
+    evaluer_palier,
+    resume_metier,
+    version_surveillee,
+)
 from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry
+from ops.seuils import (
+    ErreurSeuilsPilotage,
+    SeuilsPilotage,
+    charger_seuils_pilotage,
+    chemin_seuils_gate,
+    chemin_seuils_pilotage,
+)
+from ops.signaux import filtrer
 
 RACINE = Path(__file__).resolve().parent.parent
 CANARY_PERCENT_DEFAUT = 10
@@ -299,8 +325,12 @@ def deployer_canary(
     registry: Registry | None = None,
     *,
     origine: str = "manuel",
+    **details: Any,
 ) -> dict[str, Any]:
-    """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante."""
+    """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante.
+
+    ``details`` (pilotage) est recopié tel quel dans l'entrée de journal.
+    """
     if not MOTIF_VERSION.match(version):
         raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
     registry = registry or Registry()
@@ -325,14 +355,18 @@ def deployer_canary(
         return {**index, "canary": version, "canary_percent": pourcentage}
 
     return _transition(
-        registry, "canary", calcul, origine=origine, version=version, pourcentage=pourcentage
+        registry, "canary", calcul, origine=origine, version=version, pourcentage=pourcentage,
+        **details,
     )
 
 
 def promouvoir(
-    version: str, registry: Registry | None = None, *, origine: str = "manuel"
+    version: str, registry: Registry | None = None, *, origine: str = "manuel", **details: Any
 ) -> dict[str, Any]:
-    """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``."""
+    """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``.
+
+    ``details`` (pilotage) est recopié tel quel dans l'entrée de journal.
+    """
     if not MOTIF_VERSION.match(version):
         raise ErreurDeploiement(f"version invalide : {version!r} (attendu vX.Y.Z)")
     registry = registry or Registry()
@@ -354,14 +388,21 @@ def promouvoir(
             "canary_percent": 0,
         }
 
-    return _transition(registry, "promotion", calcul, origine=origine, version=version)
+    return _transition(registry, "promotion", calcul, origine=origine, version=version, **details)
 
 
 def rollback(
-    registry: Registry | None = None, motif: str = "manuel", *, origine: str = "manuel"
+    registry: Registry | None = None,
+    motif: str = "manuel",
+    *,
+    origine: str = "manuel",
+    **details: Any,
 ) -> dict[str, Any]:
     """Retour arrière en une opération, sans rebuild : retire le canary s'il y en a
-    un, sinon revient à ``precedente`` (un seul niveau)."""
+    un, sinon revient à ``precedente`` (un seul niveau).
+
+    ``details`` (pilotage) est recopié tel quel dans l'entrée de journal.
+    """
     registry = registry or Registry()
 
     def calcul(index: dict[str, Any]) -> dict[str, Any]:
@@ -372,7 +413,7 @@ def rollback(
             raise ErreurDeploiement("rien à annuler : ni canary en cours ni version précédente")
         return {**index, "active": precedente, "precedente": None}
 
-    return _transition(registry, "rollback", calcul, origine=origine, motif=motif)
+    return _transition(registry, "rollback", calcul, origine=origine, motif=motif, **details)
 
 
 def installer(
@@ -435,17 +476,215 @@ def installer(
     return manifeste
 
 
+# ---------------------------------------------------------------- pilotage
+def _journaliser_une_fois(
+    registry: Registry, evenement: str, fenetre_s: float, cles: dict[str, Any], **details: Any
+) -> dict[str, Any] | None:
+    """Journalise sauf si le même événement (mêmes ``cles``) date de moins de
+    ``fenetre_s`` : une alerte ou un refus n'est pas répété à chaque tour."""
+    limite = time.time() - fenetre_s
+    for entree in reversed(registry.journal()):
+        if entree.get("ts", 0) < limite:
+            break
+        if entree.get("evenement") == evenement and all(
+            entree.get(k) == v for k, v in cles.items()
+        ):
+            return None
+    return registry.journaliser(evenement, origine="auto", **cles, **details)
+
+
 def surveiller(
     registry: Registry | None = None,
     metriques: MetricsStore | None = None,
     *,
-    fenetre_s: float = 120,
-    score_min: float = 0.7,
-    taux_erreur_max: float = 0.10,
-    latence_p95_max_ms: float = 8000,
-    minimum: int = 10,
+    fenetre_s: float | None = None,
+    score_min: float | None = None,
+    taux_erreur_max: float | None = None,
+    latence_p95_max_ms: float | None = None,
+    minimum: int | None = None,
+    seuils: SeuilsPilotage | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.surveiller — détection de dérive + rollback automatique")
+    """Dérive critique de la version surveillée → rollback automatique, tracé.
+
+    Les paramètres à ``None`` viennent de ``seuils`` (sinon de
+    ``ops/seuils_pilotage.yaml``) ; les valeurs explicites l'emportent.
+    """
+    registry = registry or Registry()
+    metriques = metriques or MetricsStore()
+    s = seuils or charger_seuils_pilotage()
+    fenetre = fenetre_s if fenetre_s is not None else s.fenetre_s
+    mini = minimum if minimum is not None else s.minimum
+    surcharges = {"score_min": score_min, "taux_erreur_max": taux_erreur_max,
+                  "latence_p95_max_ms": latence_p95_max_ms}
+    seuils_derive = replace(s.derive, **{k: v for k, v in surcharges.items() if v is not None})
+
+    index = registry.index()
+    version = version_surveillee(index)
+    if version is None:
+        return {"version": None, "mesures": 0, "derive": False, "niveau": "aucune",
+                "motif": "aucune version active", "rollback": False}
+    debut = debut_palier(registry.journal(), version) if index.get("canary") == version else None
+    mesures = filtrer(metriques.lire(depuis_s=fenetre), version, depuis_ts=debut)
+    derive = detecter_derive(version, mesures, seuils_derive, minimum=mini)
+    resultat = {"version": version, "mesures": derive.mesures, "derive": derive.critique,
+                "niveau": derive.niveau, "motif": derive.motif, "rollback": False}
+
+    if derive.niveau == "marge":
+        score = next(c for c in derive.constats if c.signal == "score_moyen")
+        _journaliser_une_fois(
+            registry, "alerte", fenetre, {"version": version, "signal": "score_moyen"},
+            valeur=score.valeur, seuil=score.seuil, motif=derive.motif,
+            resume=resume_metier("alerte", version=version, valeur=score.valeur,
+                                 seuil=score.seuil),
+        )
+    elif derive.critique:
+        c = derive.principal
+        details = {
+            "signal": c.signal, "valeur": c.valeur, "seuil": c.seuil,
+            "mesures": derive.mesures, "constats": [x.to_dict() for x in derive.constats],
+            "resume": resume_metier("rollback", version=version, signal=c.signal,
+                                    valeur=c.valeur, seuil=c.seuil, mesures=derive.mesures,
+                                    sous_seuil=derive.sous_seuil),
+        }
+        try:
+            rollback(registry, motif=derive.motif, origine="auto", **details)
+            resultat["rollback"] = True
+        except ErreurDeploiement as exc:
+            _journaliser_une_fois(
+                registry, "pilotage_refus", fenetre,
+                {"version": version, "action": "rollback"},
+                raison=str(exc), motif=derive.motif,
+                resume=resume_metier("pilotage_refus", action="rollback", raison=str(exc)),
+            )
+    return resultat
+
+
+def fichiers_seuils() -> dict[str, Path]:
+    """Les deux fichiers de seuils suivis au journal (pilotage et gate)."""
+    return {
+        "ops/seuils_pilotage.yaml": chemin_seuils_pilotage(),
+        "eval/seuils.yaml": chemin_seuils_gate(),
+    }
+
+
+def _journaliser_seuils(registry: Registry, seuils: SeuilsPilotage) -> None:
+    try:
+        evenements = changements_seuils(registry.journal(), fichiers_seuils())
+    except ErreurSeuilsPilotage as exc:
+        _journaliser_une_fois(
+            registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
+            fichier="seuils",
+            resume=resume_metier("seuils_invalides", fichier="seuils", raison=str(exc)),
+        )
+        return
+    for ev in evenements:
+        registry.journaliser("seuils", origine="auto", **ev,
+                             resume=resume_metier("seuils", **ev))
+
+
+def tour(
+    registry: Registry, metriques: MetricsStore, seuils: SeuilsPilotage
+) -> dict[str, Any]:
+    """Une tour du pilote : seuils → surveillance → palier. Relit tout, ne garde rien."""
+    _journaliser_seuils(registry, seuils)
+    surveillance = surveiller(registry, metriques, seuils=seuils)
+    if surveillance["rollback"]:
+        return {"surveillance": surveillance, "palier": None}
+    with _verrou(registry):
+        index = registry.index()
+        journal = registry.journal()
+    canary = index.get("canary")
+    debut = debut_palier(journal, canary) if canary else None
+    if canary is None or debut is None:
+        if canary is not None:   # sans trace, la version resterait figée sans explication
+            raison = "aucun début de palier au journal (journal perdu ou tronqué)"
+            _journaliser_une_fois(
+                registry, "pilotage_refus", seuils.fenetre_s,
+                {"version": canary, "action": "palier"},
+                raison=raison,
+                resume=resume_metier("pilotage_refus", action="palier", raison=raison),
+            )
+        return {"surveillance": surveillance, "palier": None}
+
+    maintenant = time.time()
+    depuis_s = maintenant - debut
+    mesures = metriques.lire(depuis_s=depuis_s + 1)
+    decision = evaluer_palier(
+        canary,
+        filtrer(mesures, canary, depuis_ts=debut),
+        filtrer(mesures, index.get("active") or "", depuis_ts=debut),
+        seuils,
+        depuis_s=depuis_s,
+        pourcentage=int(index.get("canary_percent") or 0),
+    )
+    details = {
+        "motif": decision.motif,
+        "constats": [c.to_dict() for c in decision.constats],
+        "requetes": decision.requetes,
+        "depuis_s": round(decision.depuis_s, 1),
+    }
+    try:
+        if decision.action == "progresser":
+            deployer_canary(
+                canary, decision.pourcentage_suivant, registry, origine="auto",
+                resume=resume_metier("canary", version=canary,
+                                     pourcentage=decision.pourcentage_suivant,
+                                     requetes=decision.requetes, depuis_s=decision.depuis_s),
+                **details,
+            )
+        elif decision.action == "promouvoir":
+            promouvoir(canary, registry, origine="auto",
+                       resume=resume_metier("promotion", version=canary), **details)
+    except ErreurDeploiement as exc:
+        _journaliser_une_fois(
+            registry, "pilotage_refus", seuils.fenetre_s,
+            {"version": canary, "action": decision.action},
+            raison=str(exc),
+            resume=resume_metier("pilotage_refus", action=decision.action, raison=str(exc)),
+        )
+    return {"surveillance": surveillance,
+            "palier": {"action": decision.action, "motif": decision.motif}}
+
+
+def piloter(
+    registry: Registry | None = None,
+    metriques: MetricsStore | None = None,
+    *,
+    tours: int | None = None,
+    attendre: Callable[[float], None] = time.sleep,
+    charger: Callable[[], SeuilsPilotage] = charger_seuils_pilotage,
+) -> int:
+    """Boucle du pilote (service ``pilote``). Seuils invalides au démarrage →
+    ``ErreurSeuilsPilotage`` ; en cours de route → derniers seuils valides."""
+    registry = registry or Registry()
+    metriques = metriques or MetricsStore()
+    seuils = charger()
+    joues = 0
+    while tours is None or joues < tours:
+        if joues:
+            try:
+                seuils = charger()
+            except ErreurSeuilsPilotage as exc:
+                try:
+                    _journaliser_une_fois(
+                        registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
+                        fichier="ops/seuils_pilotage.yaml",
+                        resume=resume_metier("seuils_invalides",
+                                             fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
+                    )
+                except (ErreurRegistre, OSError, json.JSONDecodeError) as incident:
+                    structlog.get_logger("mardik").warning("pilotage.incident", cause=str(incident))
+        try:
+            tour(registry, metriques, seuils)
+        except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
+            # Incident transitoire (registre/métriques) : on journalise et on
+            # continue la boucle plutôt que de faire sortir le pilote (spec :
+            # seul un seuil invalide AU DÉMARRAGE doit l'arrêter).
+            structlog.get_logger("mardik").warning("pilotage.incident", cause=str(exc))
+        joues += 1
+        if tours is None or joues < tours:
+            attendre(seuils.intervalle_s)
+    return joues
 
 
 def _afficher(donnees: dict[str, Any]) -> None:
@@ -476,7 +715,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("surveiller")
     s.add_argument("--boucle", action="store_true")
     s.add_argument("--intervalle", type=float, default=5.0)
-    s.add_argument("--fenetre", type=float, default=120)
+    s.add_argument("--fenetre", type=float, default=None)
+    pl = sub.add_parser("piloter", help="boucle du pilote : surveillance + promotion")
+    pl.add_argument("--tours", type=int, default=None, help="nombre de tours (défaut : infini)")
     for commande in (i, c, pr, r):
         commande.add_argument("--origine", default="manuel",
                               help="manuel | ci:<acteur> | auto")
@@ -514,8 +755,13 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.boucle or res["rollback"]:
                     break
                 time.sleep(args.intervalle)
+        elif args.commande == "piloter":
+            piloter(tours=args.tours)
     except ErreurDeploiement as exc:
         print(f"REFUSÉ : {exc}", file=sys.stderr)
+        return 1
+    except ErreurSeuilsPilotage as exc:
+        print(f"SEUILS INVALIDES : {exc}", file=sys.stderr)
         return 1
     except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
         print(f"ÉCHEC : {exc}", file=sys.stderr)

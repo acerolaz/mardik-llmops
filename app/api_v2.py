@@ -27,10 +27,11 @@ import time
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from opentelemetry import context as otel_context
 from pydantic import BaseModel, Field
 
+from app.capture import Capture, capturer, get_capture
 from app.llm_client import Bundle, ErreurLLM, LLMClient, ReponseLLM
 from app.pipeline import Clause, DocumentTropLong, Section, consolider, decouper, extraire, scorer
 from app.telemetry import Mesure, Telemetry, build_default_telemetry
@@ -275,12 +276,18 @@ def _enregistrer_echec(telemetry: Telemetry, bundle: Bundle, debut: float) -> No
 @router.post("/analyse", response_model=ReponseAnalyseV2)
 def analyse(
     requete: RequeteAnalyseV2,
+    taches: BackgroundTasks,
     client: LLMClient = Depends(get_client_v2),
     telemetry: Telemetry = Depends(get_telemetry),
+    capture: Capture = Depends(get_capture),
 ) -> ReponseAnalyseV2:
     try:
-        return analyser_v2(requete.texte, client, telemetry)
+        reponse = analyser_v2(requete.texte, client, telemetry)
     except ErreurLLM as exc:
         raise HTTPException(
             status_code=503, detail=f"fournisseur LLM indisponible : {exc}"
         ) from exc
+    # Capture des cas à faible confiance (boucle d'enrichissement), après la
+    # réponse ; jamais dans ``analyser_v2``, que le gate appelle aussi.
+    taches.add_task(capturer, capture, requete.texte, reponse)
+    return reponse

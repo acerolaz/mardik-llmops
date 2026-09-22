@@ -31,6 +31,7 @@ def environnement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("CANARY_PERCENT", raising=False)
     monkeypatch.setenv("METRICS_PATH", str(tmp_path / "metrics.jsonl"))
     monkeypatch.setenv("REGISTRY_PATH", str(tmp_path / "registry"))
+    monkeypatch.setenv("CANDIDATS_PATH", str(tmp_path / "candidats.jsonl"))
     monkeypatch.setenv("OTEL_TRACES", "off")
     return tmp_path
 

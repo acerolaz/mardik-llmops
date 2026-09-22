@@ -17,12 +17,13 @@ from __future__ import annotations
 import random
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app import routage
 from app.api_v1 import ReponseAnalyseV1
 from app.api_v2 import ReponseAnalyseV2
+from app.capture import Capture, capturer, get_capture
 from app.llm_client import Bundle, ErreurLLM, LLMClient
 from app.routage import choisir_version as choisir_version
 from app.telemetry import Telemetry, build_default_telemetry
@@ -72,10 +73,12 @@ def etat(registry: Registry = Depends(get_registry)) -> EtatGateway:
 def analyse(
     requete: RequeteAnalyse,
     response: Response,
+    taches: BackgroundTasks,
     registry: Registry = Depends(get_registry),
     telemetry: Telemetry = Depends(get_telemetry),
     tirage: float = Depends(get_tirage),
     fabrique_client: Callable[[Bundle], LLMClient] = Depends(get_fabrique_client),
+    capture: Capture = Depends(get_capture),
 ) -> ReponseAnalyseV1 | ReponseAnalyseV2:
     try:
         version, reponse = routage.analyser(
@@ -86,4 +89,6 @@ def analyse(
             status_code=503, detail=f"fournisseur LLM indisponible : {exc}"
         ) from exc
     response.headers["X-Mardik-Version"] = version
+    if isinstance(reponse, ReponseAnalyseV2):   # la v1 ne produit pas de score
+        taches.add_task(capturer, capture, requete.texte, reponse)
     return reponse

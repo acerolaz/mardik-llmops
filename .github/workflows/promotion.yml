@@ -1,6 +1,7 @@
 # Promotion du canary : 50 % du trafic, puis 100 % (la version devient active).
-# Décision humaine dans le sous-projet 3 ; le sous-projet 4 la branchera sur les
-# métriques. S'exécute sur le runner auto-hébergé de prod, jamais sur une PR.
+# Voie humaine : le pilote (sous-projet 4) promeut automatiquement quand les
+# métriques tiennent ; ce workflow force une étape à la main.
+# S'exécute sur le runner auto-hébergé de prod, jamais sur une PR.
 
 name: promotion
 

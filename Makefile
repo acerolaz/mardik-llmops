@@ -1,4 +1,4 @@
-.PHONY: install up down serve proxy dashboard etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
+.PHONY: install up down serve proxy dashboard pilote calibrer candidats verser etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
 
 MODE ?= normal
 VERSION ?= v2
@@ -9,9 +9,9 @@ APP_URL ?= http://localhost:8000
 install:            ## dépendances (uv)
 	uv sync
 
-up:                 ## app + proxy de dérive + tableau de bord (docker compose)
+up:                 ## app + proxy de dérive + tableau de bord + pilote (docker compose)
 	docker compose up -d --build
-	@echo "app : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard : http://localhost:8501"
+	@echo "app : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard : http://localhost:8501 — pilote : docker compose logs -f pilote"
 
 down:
 	docker compose down
@@ -25,19 +25,31 @@ proxy:              ## proxy de dérive en local
 dashboard:          ## tableau de bord en local (texte) — DASH=serve pour la page HTML
 	uv run python -m ops.dashboard $(if $(filter serve,$(DASH)),--serve,)
 
+pilote:             ## boucle du pilote en local : surveillance, rollback auto, promotion canary
+	uv run python -m ops.deploy piloter
+
+calibrer:           ## propose des seuils depuis la production (VERSION=vX.Y.Z) ; n'écrit rien
+	uv run python -m ops.seuils calibrer --version $(VERSION)
+
+candidats:          ## cas v2 à faible confiance capturés, en attente de versement
+	uv run python -m eval.enrichir lister
+
+verser:             ## verse un candidat relu dans le jeu d'évaluation (ID=…, CLAUSES=type1,type2)
+	uv run python -m eval.enrichir verser $(ID) --clauses $(CLAUSES)
+
 etat:               ## répartition du trafic vue par la gateway (GET /gateway/etat, APP_URL)
 	@curl -sf $(APP_URL)/gateway/etat && echo
 
 test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 	MOCK=on uv run pytest -q
 
-test-unit:          ## pipeline v2, gate, versions, routage, transitions de déploiement, workflows : verts
+test-unit:          ## pipeline v2, gate, versions, routage, transitions, workflows, signaux, pilotage, seuils, anonymisation : verts
 	MOCK=on uv run pytest -q tests/unit
 
-test-integration:   ## remédiation + v2 + gate + publication + gateway + CLI de déploiement : verts
+test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard : verts
 	MOCK=on uv run pytest -q tests/integration
 
-test-acceptance:    ## les 10 tests du brief : 8 verts, 2 rouges (sous-projet 4)
+test-acceptance:    ## les 10 tests du brief : tous verts
 	MOCK=on uv run pytest -v tests/acceptance
 
 eval:               ## gate sur le VRAI modèle, seuils de eval/seuils.yaml (VERSION=v2, ARGS="--essais 3 --sortie eval/rapport.json")
