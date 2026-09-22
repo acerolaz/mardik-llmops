@@ -40,10 +40,19 @@ Lisez d'abord `docs/besoin_client.md`. Puis `docs/schema_remediation.md`.
 make install                 # uv sync
 cp .env.example .env         # choisir le fournisseur : ollama (gratuit) ou azure (clé API)
 ollama pull llama3.2:3b      # si LLM_PROVIDER=ollama
-make up                      # app :8000, proxy de dérive :8080, dashboard :8501, pilote
+make up                      # app + interface :8000, proxy de dérive :8080, dashboard brut :8501, pilote
 ```
 
 Sans docker : `make proxy` dans un terminal, `make serve` dans un autre.
+
+**L'interface** : <http://localhost:8000/>. La page **Analyse** envoie le même contrat à
+`/v1` et `/v2` côte à côte (ou via la gateway canary, avec la version servie), avec deux
+exemples prêts : *Exemple court* (`c02`) et *Exemple long* (`c07`, 62 ko : « Contrat
+tronqué » côté v1, indice de fiabilité et clauses par section côté v2). Son bandeau suit
+la latence P95 face au SLO de 8 s et le canary en cours. La page **Pilotage**
+(<http://localhost:8000/pilotage>) affiche tout le tableau de bord : alertes, trafic,
+palier, candidats, métriques par version, journal. Rafraîchies toutes les 5 s (bouton pause),
+clair/sombre.
 
 ```bash
 # la v1 répond et analyse un contrat court
@@ -69,20 +78,22 @@ curl -si localhost:8000/analyse -H 'content-type: application/json' \
 
 | Commande | Quoi |
 |---|---|
-| `make up` / `make down` | app + proxy + dashboard + pilote (docker compose) |
+| `make up` / `make down` | app + interface + proxy + dashboard brut + pilote (docker compose) |
+| `make serve` | app + interface en local, sans docker (<http://localhost:8000/>) |
 | `make test` | tout, en `MOCK=on` |
 | `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement, des workflows, des signaux, du pilotage, des seuils et de l'anonymisation (verts) |
-| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway, de la CLI de déploiement, de la surveillance, du pilote, de la capture, de l'enrichissement et du dashboard (verts) |
+| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway, de la CLI de déploiement, de la surveillance, du pilote, de la capture, de l'enrichissement, du dashboard et de l'interface (verts) |
+| `make test-web` | le module JS partagé de l'interface (`node --test`, sans dépendance) |
 | `make test-acceptance` | les 10 tests du brief (verts) |
 | `make etat` | répartition courante du trafic vue par la gateway (`APP_URL`, défaut `http://localhost:8000`) |
 | `make eval VERSION=v2` | le gate d'évaluation sur le **vrai** modèle (`ARGS="--essais 3"`) |
 | `make traffic MODE=derive-score` | trafic sur la gateway + dérive commandée (`normal`, `derive-latence`, `erreurs`) |
-| `make dashboard` | tableau de bord (texte) ; `DASH=serve` pour la page HTML |
+| `make dashboard` | tableau de bord brut (texte) ; `DASH=serve` pour sa page HTML sur :8501 |
 | `make pilote` | boucle du pilote : surveillance, rollback automatique, promotion canary |
 | `make calibrer VERSION=v2.0.0` | propose des seuils (moyenne − k·σ) sur la production ; n'écrit rien |
 | `make candidats` | cas v2 à faible confiance capturés, en attente de versement |
 | `make verser ID=… CLAUSES=a,b` | verse un candidat relu dans le jeu d'évaluation (`eval/contrats/`, `attendus.jsonl`) |
-| `make ci` | l'équivalent local du workflow GitHub (le gate MOCK passe avant l'acceptance) |
+| `make ci` | l'équivalent local du workflow GitHub (le gate MOCK passe avant l'acceptance ; tests JS si Node est présent) |
 | `make fixtures` | (ré)enregistre les fixtures `MOCK` avec le vrai modèle |
 
 Gate : `python -m eval.run_eval --version v2 [--essais 3] [--sortie rapport.json]` (seuils :
@@ -100,7 +111,10 @@ runner auto-hébergé. Procédure : `docs/exploitation.md` §4 et §5.
 ```
 app/          main.py (FastAPI, handler 413), api_v1.py [INTOUCHABLE], api_v2.py [FAIT — v2.0.0],
               gateway.py [FAIT — routage canary, SP3], routage.py [FAIT — SP3],
-              llm_client.py [FOURNI], telemetry.py [FOURNI], capture.py [SP4]
+              llm_client.py [FOURNI], telemetry.py [FOURNI], capture.py [SP4],
+              pilotage.py [GET /pilotage/resume — interface]
+app/web/     index.html + analyse.js (Analyse), pilotage.html + pilotage.js (Pilotage),
+              commun.js, styles.css [interface client]
 app/pipeline/ decoupage.py, extraction.py, consolidation.py, confiance.py, erreurs.py [FAIT — v2.0.0]
 models/       v1/config.yaml [FOURNI], v2/config.yaml [FAIT — bundle map_reduce_clauses]
 eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), seuils.yaml [FAIT],
@@ -112,11 +126,12 @@ scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
 tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows,
               signaux, pilotage, seuils_pilotage, calibrer, resume_metier, anonymisation, verrou_capture),
               integration/ (v1 + v2 + gate + publication + gateway + cli_deploy + surveiller + piloter
-              + capture + enrichir + dashboard + details_journal),
+              + capture + enrichir + dashboard + details_journal + interface),
+              web/ (module JS de l'interface, node --test),
               acceptance/ (10 tests du brief : verts)
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [§4-§7 FAIT — SP3, SP4],
               superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication, routage/déploiement,
-              observabilité)
+              observabilité, interface client)
 .github/      workflows/ci.yml — gates (MOCK + release), build, publication, canary (installation + 10 %) ;
               promotion.yml (50 %, 100 %) et rollback.yml — pilotage manuel
 ```
@@ -135,9 +150,12 @@ docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, e
    le vrai modèle ?*
 5. **Le pilotage** — `app/gateway.py` (routeur canary), `ops/dashboard.py`,
    `docs/exploitation.md`.
+6. **L'interface client** — `app/web/`, `app/pilotage.py` : le livrable « un client via
+   un frontend accessible via un lien ».
 
-Démo de fin : `make traffic MODE=derive-score` en live → dérive vue au tableau
-de bord → rollback automatique par le pilote → entrée au journal. Procédure des
+Démo de fin : *Exemple long* sur <http://localhost:8000/> (v1 tronque, v2 non), puis
+`make traffic MODE=derive-score` en live → dérive vue sur <http://localhost:8000/pilotage> →
+rollback automatique par le pilote → entrée au journal. Procédure des
 trois boucles (rollback, promotion, enrichissement) : `docs/exploitation.md` §7.
 
 ## Coût et non-déterminisme
@@ -453,3 +471,47 @@ pas : concevez avec.
 - `ops/registry/__init__.py::journal()` ne tolère pas une ligne corrompue
   (fichier fourni, hors périmètre) : le pilote survit et le dashboard alerte.
 - Premier run réel du service `pilote` sur l'environnement de prod.
+
+### Non publié — interface client
+
+*2026-09-22 — branche `worktree-interface-client`, PR #6. Spec :
+`docs/superpowers/specs/2026-09-22-interface-client-design.md` · Plan :
+`docs/superpowers/plans/2026-09-22-interface-client.md`.*
+
+**Ajouté**
+
+- **Page Analyse** (`GET /`, `app/web/index.html` + `analyse.js`) : le même contrat
+  envoyé à `/v1` et `/v2` côte à côte (chaque colonne se remplit seule : un 413 v2
+  n'empêche pas v1), ou via la gateway avec la version servie (`X-Mardik-Version`) ;
+  exemples court et long ; avertissement avant troncature v1 ; vocabulaire métier
+  (« Contrat tronqué », « Indice de fiabilité », « Analyse non fiable », « à relire ») ;
+  bandeau P95 vs SLO 8 s et canary en cours.
+- **Page Pilotage** (`GET /pilotage`, `pilotage.html` + `pilotage.js`) : tous les champs du
+  résumé — alertes, part de trafic, palier, candidats, cartes par version (P50/P95,
+  erreurs, score, coût, histogramme, sparklines), journal.
+- **`GET /pilotage/resume`** (`app/pilotage.py`) : route mince sur `ops.dashboard.resume()`,
+  schéma Pydantic `ResumePilotage` ; même fenêtre que le pilote, jamais de 500 sur une
+  source illisible.
+- **Design system** (UI UX PRO MAX) : « Trust & Authority », palette « Legal Services »,
+  EB Garamond + Lato, tokens `light-dark()`, contrastes AA, `prefers-reduced-motion`,
+  responsive 375 → 1440 px. HTML/CSS/JS vanilla, sans dépendance ni build.
+- **Tests** : `tests/integration/test_interface.py` (10) et `tests/web/commun.test.mjs`
+  (arrondi aligné sur Python, `make test-web`). `MOCK=on uv run pytest -q` : 338 passés.
+- **Makefile** : cible `test-web`, tests JS dans `make ci` si Node est présent, liens de
+  l'interface dans `make up`.
+
+**Modifié**
+
+- `app/main.py` : routeur de pilotage, montages `/static` (`app/web`) et `/exemples`
+  (`eval/contrats`, lecture seule), pages `/` et `/pilotage`.
+
+**Inchangé** : `app/api_v1.py`, `app/api_v2.py`, `app/gateway.py`, `ops/dashboard.py`
+(la page brute reste sur :8501), `docker-compose.yml`, `Dockerfile`.
+
+**Reste à faire**
+
+- Rafraîchissement sans garde « requête en cours » : des réponses lentes peuvent
+  arriver dans le désordre.
+- Un pourcentage de canary hors 10/50/100 n'active aucune étape du palier (paliers
+  dupliqués en constante JS).
+- Une réponse 200 non JSON laisse le squelette de chargement affiché.
