@@ -9,6 +9,7 @@ from app.llm_client import Bundle
 from app.routage import (
     MOTEURS_HTTP,
     AucuneVersionActive,
+    BundleIllisible,
     StrategieInconnue,
     analyser,
     resoudre,
@@ -57,6 +58,12 @@ def test_strategie_inconnue(registry):
         contenu.replace("strategie: monolithique", "strategie: rag"), encoding="utf-8"
     )
     with pytest.raises(StrategieInconnue, match="version v1.0.0 : stratégie 'rag' non routable"):
+        resoudre(registry, tirage=0.0)
+
+
+def test_bundle_illisible(registry):
+    (registry.root / "v1.0.0" / "config.yaml").unlink()
+    with pytest.raises(BundleIllisible, match="version v1.0.0 : bundle illisible"):
         resoudre(registry, tirage=0.0)
 
 

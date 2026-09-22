@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import yaml
 from pydantic import BaseModel
 
 from app.api_v1 import analyser_v1
@@ -53,6 +54,14 @@ class StrategieInconnue(ErreurRoutage):
         self.strategie = strategie
 
 
+class BundleIllisible(ErreurRoutage):
+    """``config.yaml`` (ou son ``prompt_fichier``) est absent ou illisible."""
+
+    def __init__(self, version: str, erreur: Exception) -> None:
+        super().__init__(f"version {version} : bundle illisible ({erreur})")
+        self.version = version
+
+
 @dataclass(frozen=True)
 class Cible:
     version: str
@@ -76,7 +85,10 @@ def resoudre(registry: Registry, tirage: float) -> Cible:
     version = choisir_version(
         active, index.get("canary"), int(index.get("canary_percent") or 0), tirage
     )
-    bundle = registry.bundle(version)
+    try:
+        bundle = registry.bundle(version)
+    except (OSError, yaml.YAMLError) as exc:
+        raise BundleIllisible(version, exc) from exc
     moteur = MOTEURS_HTTP.get(bundle.strategie)
     if moteur is None:
         raise StrategieInconnue(version, bundle.strategie)

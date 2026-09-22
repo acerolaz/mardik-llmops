@@ -86,6 +86,13 @@ def test_strategie_inconnue_503(client, registry):
     assert reponse.json()["detail"] == "version v1.0.0 : stratégie 'rag' non routable"
 
 
+def test_bundle_illisible_503(client, registry):
+    (registry.root / "v1.0.0" / "config.yaml").unlink()
+    reponse = client.post("/analyse", json={"texte": TEXTE})
+    assert reponse.status_code == 503
+    assert "version v1.0.0 : bundle illisible" in reponse.json()["detail"]
+
+
 def test_fournisseur_indisponible_503(client):
     client.app.dependency_overrides[gateway.get_fabrique_client] = lambda: (
         lambda bundle: FauxClient(bundle, erreur=ErreurLLM("délai dépassé"))
