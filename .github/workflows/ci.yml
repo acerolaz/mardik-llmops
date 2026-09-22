@@ -154,7 +154,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: gate-reel
-          path: .
+          path: eval
       - name: Rapport du gate mock (repli)
         if: needs.gate-release.result != 'success'
         uses: actions/download-artifact@v4

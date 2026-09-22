@@ -92,3 +92,18 @@ def test_aucune_cle_dupliquee(nom):
     serait rejetée par GitHub Actions — on le détecte ici avant coup."""
     texte = (WORKFLOWS / nom).read_text(encoding="utf-8")
     yaml.load(texte, Loader=_LoaderSansDoublons)
+
+
+def test_rapports_de_gate_telecharges_dans_eval():
+    """publier lit `eval/rapport.json` : gate-reel/gate-mock uploadent depuis `eval/`
+    (racine de l'artefact), donc leur téléchargement doit cibler `path: eval`."""
+    publication = _charger("ci.yml")["jobs"]["publication"]
+    etapes_gate = [
+        etape
+        for etape in publication["steps"]
+        if etape.get("uses", "").startswith("actions/download-artifact")
+        and etape.get("with", {}).get("name") in {"gate-reel", "gate-mock"}
+    ]
+    assert etapes_gate, "aucune étape de téléchargement gate-reel/gate-mock trouvée"
+    for etape in etapes_gate:
+        assert etape["with"]["path"] == "eval", etape["name"]
