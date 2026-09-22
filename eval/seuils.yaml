@@ -1,0 +1,11 @@
+# Seuils du gate d'évaluation — config as code.
+#
+# Toute modification passe par un commit (jamais en silence) et met à jour
+# « motif » : pourquoi ce seuil, sur quelle observation. Chaque rapport du
+# gate recopie les seuils appliqués (eval/history.jsonl).
+# Le seuil par contrat reste « seuil_note » dans eval/attendus.jsonl.
+
+note_min: 0.75              # note globale minimale (rappel moyen des clauses attendues)
+latence_p95_max_ms: 8000    # contrainte client : P95 < 8 s par analyse
+cout_moyen_max_eur: 0.15    # contrainte client : < 0,15 € par analyse
+motif: "seuils initiaux — contraintes client (P95 < 8 s, < 0,15 € par analyse), note = seuil_note de base"
