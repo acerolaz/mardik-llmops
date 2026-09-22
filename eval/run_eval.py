@@ -125,7 +125,10 @@ def charger_seuils(chemin: Path | str | None = None) -> Seuils:
         if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
             raise ErreurSeuils(f"{chemin} : « {cle} » doit être un nombre, reçu {valeur!r}")
         valeurs[cle] = float(valeur)
-    return Seuils(**valeurs, motif=str(data.get("motif") or ""))
+    motif = str(data.get("motif") or "").strip()
+    if not motif:
+        raise ErreurSeuils(f"{chemin} : clé « motif » manquante ou vide")
+    return Seuils(**valeurs, motif=motif)
 
 
 @dataclass
