@@ -152,6 +152,11 @@ function jauge(libelle, valeur, cible, fmt) {
 
 export function rendrePalier(palier) {
   if (!palier) return '<p class="vide">Aucun canary en cours : la version active reçoit tout le trafic.</p>';
+  if (palier.pourcentage == null) {
+    return `<p class="palier-titre">${esc(palier.version)} reçoit une part inconnue du trafic</p>
+      ${jauge("Requêtes du palier", palier.requetes, palier.requetes_min, (n) => String(n))}
+      ${jauge("Durée du palier", palier.depuis_s, palier.duree_min_s, fmtDuree)}`;
+  }
   const etapes = PALIERS.map((p) => {
     const etat = p < palier.pourcentage ? "fait" : p === palier.pourcentage ? "actif" : "a-venir";
     return `<li class="etape ${etat}"${etat === "actif" ? ' aria-current="step"' : ""}><span class="pastille"></span>${p} %</li>`;
