@@ -72,19 +72,26 @@ def _par_version(mesures: list[Mesure]) -> dict[str, dict[str, Any]]:
 def _palier(
     index: dict[str, Any],
     journal: list[dict[str, Any]],
-    mesures: list[Mesure],
+    metriques: MetricsStore,
     seuils: SeuilsPilotage | None,
     maintenant: float,
 ) -> dict[str, Any] | None:
+    """Le palier canary en cours, compté sur **tout le palier** et non sur la
+    fenêtre de surveillance : ``ops.deploy.tour`` décide sur ce même compte."""
     canary = index.get("canary")
     if canary is None:
         return None
     debut = debut_palier(journal, canary)
+    if debut is None:
+        requetes = 0
+    else:
+        du_palier = metriques.lire(depuis_s=max(maintenant - debut, 0) + 1)
+        requetes = len(filtrer(du_palier, canary, depuis_ts=debut))
     return {
         "version": canary,
         "pourcentage": index.get("canary_percent"),
         "depuis_s": round(maintenant - debut, 1) if debut is not None else None,
-        "requetes": len(filtrer(mesures, canary, depuis_ts=debut)),
+        "requetes": requetes,
         "duree_min_s": seuils.promotion.duree_min_s if seuils else None,
         "requetes_min": seuils.promotion.requetes_min if seuils else None,
     }
@@ -139,7 +146,7 @@ def resume(
         "fenetre_s": fenetre,
         "total": len(mesures),
         "par_version": _par_version(mesures),
-        "palier": _palier(index, journal, mesures, seuils, maintenant),
+        "palier": _palier(index, journal, metriques, seuils, maintenant),
         "alertes": alertes,
         "candidats": len(candidats_en_attente(candidats)),
         "journal": journal[-5:],

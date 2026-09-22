@@ -128,3 +128,19 @@ def test_rendre_html(metriques, registry):
 def test_rendre_html_sans_trafic(metriques, registry, tmp_path):
     page = rendre_html(resume(metriques, registry=registry, candidats=tmp_path / "x"))
     assert "aucun trafic dans la fenêtre" in page
+
+
+def test_palier_compte_toutes_les_requetes_du_palier(metriques, registry, tmp_path, monkeypatch):
+    """Le palier peut être plus long que la fenêtre : le compteur suit le palier."""
+    vrai_time = time.time
+    depart = vrai_time() - 600
+    monkeypatch.setattr(time, "time", lambda: depart)   # le canary est daté d'il y a 600 s
+    _canary(registry)
+    monkeypatch.setattr(time, "time", vrai_time)
+
+    _mesures(metriques, "v2.0.0", 5, score=0.9, ts=depart + 10, latence=2500)   # dans le palier, hors fenêtre
+    _mesures(metriques, "v2.0.0", 3, score=0.9, latence=2500)                   # dans la fenêtre
+
+    r = resume(metriques, registry=registry, fenetre_s=300, candidats=tmp_path / "absent.jsonl")
+    assert r["total"] == 3                      # la fenêtre ne montre que les 3 récentes
+    assert r["palier"]["requetes"] == 8         # le palier en compte 8, comme le pilote
