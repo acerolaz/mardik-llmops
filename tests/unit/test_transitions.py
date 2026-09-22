@@ -1,6 +1,8 @@
 """Tests unitaires — registre (écriture atomique) et transitions de déploiement."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.llm_client import Bundle
@@ -195,3 +197,38 @@ def test_installer_sans_manifeste(registry, tmp_path):
 def test_installer_version_incoherente(registry, tmp_path):
     with pytest.raises(ErreurDeploiement, match="décrit 'v2.0.0', pas v2.0.1"):
         installer("v2.0.1", _artefact(tmp_path), registry)
+
+
+def test_installer_depuis_fichier_refuse(registry, tmp_path):
+    """Si depuis est un fichier (pas un dossier), OSError est attrapée."""
+    fichier = tmp_path / "fichier.txt"
+    fichier.write_text("contenu")
+    with pytest.raises(ErreurDeploiement, match="manifeste introuvable"):
+        installer("v2.0.0", fichier, registry)
+
+
+def test_installer_copytree_failure_nettoie(registry, tmp_path, monkeypatch):
+    """Si copytree échoue, temp folder est nettoyé, version n'est pas ajoutée."""
+    dossier = _artefact(tmp_path)
+    journal_avant = registry.journal()
+    versions_avant = set(registry.versions())
+
+    def copytree_qui_echoue(src, dst, *args, **kwargs):
+        # Créer un dossier partiel
+        Path(dst).mkdir(parents=True, exist_ok=True)
+        (Path(dst) / "partial.txt").write_text("partiel")
+        raise OSError("disque plein")
+
+    monkeypatch.setattr("ops.deploy.shutil.copytree", copytree_qui_echoue)
+
+    with pytest.raises(ErreurDeploiement, match="installation de v2.0.0 impossible"):
+        installer("v2.0.0", dossier, registry)
+
+    # Vérifier que v2.0.0 n'a pas été ajoutée
+    assert "v2.0.0" not in registry.versions()
+    assert set(registry.versions()) == versions_avant
+    # Vérifier que le journal n'a pas changé
+    assert registry.journal() == journal_avant
+    # Vérifier qu'il n'y a pas de dossier temporaire orphelin
+    temp_files = [f for f in registry.root.iterdir() if f.name.startswith(".")]
+    assert len(temp_files) == 0, f"Dossier temporaire orphelin trouvé : {temp_files}"

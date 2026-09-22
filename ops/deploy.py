@@ -382,6 +382,8 @@ def installer(
         manifeste = json.loads(chemin.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ErreurDeploiement(f"manifeste introuvable : {chemin}") from exc
+    except OSError as exc:
+        raise ErreurDeploiement(f"manifeste introuvable : {chemin}") from exc
     except json.JSONDecodeError as exc:
         raise ErreurDeploiement(f"manifeste illisible : {chemin} ({exc})") from exc
     if not isinstance(manifeste, dict) or manifeste.get("version") != version:
@@ -397,7 +399,20 @@ def installer(
                     f"≠ {manifeste.get('empreinte')} : un tag est immuable"
                 )
             return installe
-        shutil.copytree(depuis, registry.root / version)
+        # Copier dans un dossier temporaire d'abord
+        temp_folder = registry.root / f".{version}.installation"
+        try:
+            # Nettoyer tout dossier temporaire orphelin
+            if temp_folder.exists():
+                shutil.rmtree(temp_folder, ignore_errors=True)
+            shutil.copytree(depuis, temp_folder)
+            # Renommer après succès
+            os.replace(temp_folder, registry.root / version)
+        except OSError as exc:
+            # Nettoyer le dossier temporaire en cas d'erreur
+            if temp_folder.exists():
+                shutil.rmtree(temp_folder, ignore_errors=True)
+            raise ErreurDeploiement(f"installation de {version} impossible : {exc}") from exc
         registry.journaliser(
             "installation",
             version=version,
