@@ -76,26 +76,28 @@ make test-acceptance         # 3 verts, 7 rouges depuis la v2.0.0 (1 vert, 9 rou
 Gate : `python -m eval.run_eval --version v2 [--essais 3] [--sortie rapport.json]` (seuils :
 `eval/seuils.yaml`).
 
-Déploiement : `python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport rapport.json] | canary v2.0.0 --pourcentage 10 | promouvoir v2.0.0 | rollback | surveiller --boucle`.
+Déploiement : `python -m ops.deploy publier [v2.0.0] [--commit SHA] [--rapport rapport.json] | installer v2.0.0 --depuis DOSSIER [--origine ci:acteur] | canary v2.0.0 --pourcentage 10 [--origine ci:acteur] | promouvoir v2.0.0 [--origine ci:acteur] | rollback [--motif M] [--origine ci:acteur] | surveiller --boucle`.
 
 ## Arborescence
 
 ```
 app/          main.py (FastAPI, handler 413), api_v1.py [INTOUCHABLE], api_v2.py [FAIT — v2.0.0],
-              gateway.py [STUB], llm_client.py [FOURNI], telemetry.py [FOURNI]
+              gateway.py [FAIT — routage canary, SP3], routage.py [FAIT — SP3],
+              llm_client.py [FOURNI], telemetry.py [FOURNI]
 app/pipeline/ decoupage.py, extraction.py, consolidation.py, confiance.py, erreurs.py [FAIT — v2.0.0]
 models/       v1/config.yaml [FOURNI], v2/config.yaml [FAIT — bundle map_reduce_clauses]
 eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), seuils.yaml [FAIT],
               run_eval.py [FAIT — gate], history.jsonl, rapport.json [GÉNÉRÉS]
-ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier FAIT ; canary, promotion,
-              rollback, surveillance en STUB], dashboard.py [STUB]
+ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier, installer, canary,
+              promotion, rollback FAIT — SP3 ; surveillance en STUB, SP4], dashboard.py [STUB]
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
-tests/        unit/ (pipeline, analyser_v2, gate, versions : 105 tests),
-              integration/ (v1 + v2 + gate + publication : 43 tests),
-              acceptance/ (10 tests du brief : 6 verts, 4 en attente des sous-projets 3 et 4)
-docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [À RÉDIGER],
-              superpowers/specs/ et superpowers/plans/ (moteur v2, gate et publication)
-.github/      workflows/ci.yml — gates (MOCK + release), build, publication ; canary en TODO
+tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows),
+              integration/ (v1 + v2 + gate + publication + gateway + cli_deploy),
+              acceptance/ (10 tests du brief : 8 verts, 2 en attente du sous-projet 4)
+docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [FAIT — SP3],
+              superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication et routage/déploiement)
+.github/      workflows/ci.yml — gates (MOCK + release), build, publication, canary (installation + 10 %) ;
+              promotion.yml (50 %, 100 %) et rollback.yml — pilotage manuel
 ```
 
 ## Les chantiers
@@ -281,3 +283,67 @@ pas : concevez avec.
   release mesure la qualité réelle.
 - À vérifier au premier run GitHub après la fusion : le tag est posé,
   l'artefact `mardik-vX.Y.Z` est complet et le job canary n'est pas sauté.
+
+### Non publié — routage canary et déploiement piloté (sous-projet 3)
+
+*2026-09-22 — branche `feature/routage-deploiement`. Spec :
+`docs/superpowers/sdd/2026-09-22-routage-deploiement/`.*
+
+**Ajouté**
+
+- **Gateway canary** (`app/gateway.py`, `app/routage.py`) : `POST /analyse`
+  relit `ops/registry/index.json` à **chaque requête** — une promotion ou un
+  rollback prend effet sans redémarrage — choisit la version (`active` ou
+  `canary`, selon `canary_percent` et un tirage aléatoire) et le moteur
+  associé à sa stratégie (`monolithique` → v1, `map_reduce_clauses` → v2).
+  `GET /gateway/etat` expose `active`/`canary`/`canary_percent`. Erreurs
+  explicites, jamais de 500 brut : `503` si aucune version active
+  (`AucuneVersionActive`), si la stratégie livrée n'est pas routable
+  (`StrategieInconnue`) ou si le bundle livré est illisible
+  (`BundleIllisible` — `config.yaml` ou son `prompt_fichier` absent/corrompu) ;
+  `503` aussi si le fournisseur LLM échoue.
+- **Déploiement piloté** (`ops/deploy.py`) : `installer` (copie l'artefact CI
+  dans le registre de prod, idempotent à empreinte égale, exige un
+  `config.yaml` dans le dossier source), `deployer_canary` (10/50 % par
+  défaut, refuse sans version active ou avec un autre canary en cours),
+  `promouvoir` (l'ancienne active devient `precedente`), `rollback` (un seul
+  niveau, retire le canary en priorité). Toute transition passe par
+  `_transition` : verrou exclusif inter-processus (`index.lock`), calcul pur
+  qui lève `ErreurDeploiement` en cas de refus, écriture atomique de l'index,
+  puis entrée de journal `{evenement, avant, apres, origine}`. `origine` :
+  `manuel`, `ci:<acteur GitHub>` ou `auto` (sous-projet 4).
+- **CLI** : `python -m ops.deploy installer vX.Y.Z --depuis DOSSIER | canary
+  vX.Y.Z [--pourcentage N] | promouvoir vX.Y.Z | rollback [--motif M]`, chacune
+  avec `--origine`. Refus métier → `REFUSÉ : …` sur stderr, code 1 ; une
+  erreur système non enveloppée (permission, disque, registre corrompu) →
+  `ÉCHEC : …` sur stderr, code 1 — jamais de traceback brut.
+- **Chaîne GitHub** : `ci.yml` (job `deploiement-canary`, runner auto-hébergé
+  `[self-hosted, mardik]`) installe puis déploie 10 % de canary juste après
+  la publication sur `main` ou un tag ; `promotion.yml` (déclenchement manuel)
+  passe le canary à 50 % puis promeut à 100 % ; `rollback.yml` (déclenchement
+  manuel) exécute le rollback en une opération. Les trois jobs de prod
+  partagent `environment: production`, `concurrency: mardik-production` et
+  ne s'exécutent jamais sur une pull request. Une étape « Préconditions »
+  vérifie que `MARDIK_REGISTRY_PATH/index.json` existe avant toute écriture,
+  pour ne jamais opérer sur un registre fantôme silencieusement recréé vide.
+- **`docs/exploitation.md`** rédigé : schéma d'étiquetage, chaîne de
+  livraison, déploiement progressif (étapes, refus, effet d'une relance),
+  procédure de rollback, installation et durcissement du runner de prod
+  (dépôt privé ou approbation des workflows de fork, environnement
+  `production` restreint à `main`/`v*`, `MARDIK_REGISTRY_PATH` hors du
+  dossier `_work` du runner).
+- **Tests** : `tests/unit/test_routage.py`, `tests/unit/test_transitions.py`,
+  `tests/unit/test_workflows.py` (invariants de sécurité des workflows de
+  prod) ; `tests/integration/test_gateway.py`,
+  `tests/integration/test_cli_deploy.py`. 8 tests d'acceptance sur 10 sont
+  verts, dont `test_rollback_en_une_operation`,
+  `test_promotion_canary_puis_totale` et `test_client_v1_fonctionne`.
+
+**Inchangé** : `app/api_v1.py`, `models/v1/`, `app/llm_client.py`,
+`app/telemetry.py`, `ops/registry/` (hors écriture atomique déjà en place).
+
+**Reste à faire**
+
+- Les 2 derniers tests d'acceptance attendent le sous-projet 4 : tableau de
+  bord par version et détection de dérive avec rollback automatique
+  (`ops/deploy.surveiller`, `ops/dashboard.py`).
