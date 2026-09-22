@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 
 from app.capture import Capture, candidats_en_attente, get_capture
+from app.llm_client import Bundle
+from ops.deploy import promouvoir
 
 
 def _brancher(client, capture: Capture) -> None:
@@ -72,4 +74,22 @@ def test_le_gate_ne_capture_rien(tmp_path, monkeypatch, historique):
     chemin = tmp_path / "cand.jsonl"
     monkeypatch.setenv("CANDIDATS_PATH", str(chemin))
     evaluer("v2", sous_ensemble=["c01"], historique=historique)
+    assert not chemin.exists()
+
+
+def test_gateway_capture_la_v2(client, registry, contrat, tmp_path):
+    registry.etiqueter("v2.0.0", Bundle.charger("v2"), commit="abc1234", note_eval=0.9)
+    promouvoir("v2.0.0", registry)
+    chemin = tmp_path / "cand.jsonl"
+    _brancher(client, Capture(chemin, score_max=1.01))
+    r = client.post("/analyse", json={"texte": contrat("c02")})
+    assert r.headers["x-mardik-version"] == "v2.0.0"
+    assert len(_lignes(chemin)) == 1
+
+
+def test_gateway_ne_capture_pas_la_v1(client, contrat, tmp_path):
+    chemin = tmp_path / "cand.jsonl"
+    _brancher(client, Capture(chemin, score_max=1.01))
+    r = client.post("/analyse", json={"texte": contrat("c02")})
+    assert r.headers["x-mardik-version"] == "v1.0.0"
     assert not chemin.exists()
