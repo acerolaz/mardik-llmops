@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from app.telemetry import Mesure
-from ops.seuils import SeuilsDerive, SeuilsPilotage
+from ops.seuils import SeuilsDerive, SeuilsPilotage, empreinte, lire_brut
 from ops.signaux import agreger, scores
 
 NIVEAUX = ("aucune", "marge", "critique", "echantillon_insuffisant")
@@ -178,3 +179,124 @@ def evaluer_palier(
         f"palier {pourcentage} % tenu : {c.requetes} analyses conformes en {depuis_s:.0f} s",
         c.requetes, depuis_s,
     )
+
+
+# ------------------------------------------------------------------- seuils
+def changements_seuils(
+    journal: list[dict[str, Any]], fichiers: dict[str, Path]
+) -> list[dict[str, Any]]:
+    """Un événement par fichier dont l'empreinte diffère de sa dernière entrée
+    ``seuils`` (état initial journalisé au premier passage : ``avant: None``).
+    Lève ``ErreurSeuilsPilotage`` si un fichier est absent ou illisible."""
+    evenements = []
+    for nom, chemin in fichiers.items():
+        courante = empreinte(chemin)
+        derniere = next(
+            (e for e in reversed(journal)
+             if e.get("evenement") == "seuils" and e.get("fichier") == nom),
+            None,
+        )
+        if derniere is not None and derniere.get("empreinte") == courante:
+            continue
+        valeurs = lire_brut(chemin)
+        evenements.append(
+            {
+                "fichier": nom,
+                "empreinte": courante,
+                "avant": derniere.get("apres") if derniere else None,
+                "apres": valeurs,
+                "motif": str(valeurs.get("motif", "")),
+            }
+        )
+    return evenements
+
+
+# -------------------------------------------------------- résumés métier
+def _fr(valeur: float, decimales: int = 2) -> str:
+    return f"{valeur:.{decimales}f}".replace(".", ",")
+
+
+def _pct(valeur: float) -> str:
+    return f"{valeur * 100:.0f} %"
+
+
+def _valeur_fr(v: Any) -> str:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, int) or float(v).is_integer():
+        return str(int(v))
+    return _fr(v)
+
+
+def _aplatir(d: dict[str, Any] | None, prefixe: str = "") -> dict[str, Any]:
+    plat: dict[str, Any] = {}
+    for cle, v in (d or {}).items():
+        if isinstance(v, dict):
+            plat.update(_aplatir(v, f"{prefixe}{cle}."))
+        else:
+            plat[f"{prefixe}{cle}"] = v
+    return plat
+
+
+def _differences(avant: dict[str, Any], apres: dict[str, Any]) -> list[str]:
+    a, b = _aplatir(avant), _aplatir(apres)
+    return [
+        f"{cle} {_valeur_fr(a.get(cle))} → {_valeur_fr(b.get(cle))}"
+        for cle in sorted(set(a) | set(b))
+        if cle != "motif" and a.get(cle) != b.get(cle)
+    ]
+
+
+def _resume_rollback(d: dict[str, Any]) -> str:
+    version, signal = d["version"], d["signal"]
+    if signal == "score_moyen":
+        return (f"Version {version} retirée : {d.get('sous_seuil', 0)} analyses sur "
+                f"{d['mesures']} jugées peu fiables (score < {_fr(d['seuil'])}).")
+    if signal == "taux_erreur":
+        return (f"Version {version} retirée : {_pct(d['valeur'])} des analyses en échec "
+                f"(maximum toléré {_pct(d['seuil'])}).")
+    return (f"Version {version} retirée : analyses trop lentes "
+            f"(P95 {_fr(d['valeur'] / 1000, 1)} s, maximum {_fr(d['seuil'] / 1000, 1)} s).")
+
+
+def _resume_seuils(d: dict[str, Any]) -> str:
+    if d.get("avant") is None:
+        return f"Seuils en vigueur ({d['fichier']}) : {d['motif']}."
+    diffs = ", ".join(_differences(d["avant"], d["apres"])) or "motif seul"
+    return f"Seuils modifiés ({d['fichier']}) : {diffs} (motif : {d['motif']})."
+
+
+_GABARITS = {
+    "rollback": _resume_rollback,
+    "canary": lambda d: (
+        f"Version {d['version']} étendue à {d['pourcentage']} % des clients : "
+        f"{d['requetes']} analyses conformes en {d['depuis_s']:.0f} s."
+    ),
+    "promotion": lambda d: (
+        f"Version {d['version']} servie à tous les clients : tous les critères tenus."
+    ),
+    "alerte": lambda d: (
+        f"Version {d['version']} à surveiller : score moyen {_fr(d['valeur'])}, "
+        f"proche du seuil {_fr(d['seuil'])}."
+    ),
+    "pilotage_refus": lambda d: (
+        f"Action automatique « {d['action']} » impossible : {d['raison']}."
+    ),
+    "enrichissement": lambda d: (
+        f"Contrat {d['contrat_id']} ajouté au jeu d'évaluation "
+        f"(score en production {_fr(d['score'])})."
+    ),
+    "seuils": _resume_seuils,
+    "seuils_invalides": lambda d: (
+        f"Seuils illisibles ({d['fichier']}) : derniers seuils valides conservés — "
+        f"{d['raison']}."
+    ),
+}
+
+
+def resume_metier(evenement: str, **details: Any) -> str:
+    """La phrase lisible par un non-technicien (CTO, client) en cas d'audit."""
+    gabarit = _GABARITS.get(evenement)
+    if gabarit is None:
+        raise ValueError(f"événement sans gabarit de résumé : {evenement}")
+    return gabarit(details)

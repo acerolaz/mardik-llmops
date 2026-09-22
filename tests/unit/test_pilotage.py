@@ -1,8 +1,10 @@
 """Décisions pures du pilote : dérive, palier, changements de seuils."""
 from __future__ import annotations
 
+import yaml
+
 from app.telemetry import Mesure
-from ops.pilotage import debut_palier, detecter_derive, evaluer_palier, version_surveillee
+from ops.pilotage import changements_seuils, debut_palier, detecter_derive, evaluer_palier, version_surveillee
 from ops.seuils import SeuilsDerive, charger_seuils_pilotage
 
 DERIVE = SeuilsDerive(score_min=0.70, marge=0.05, taux_erreur_max=0.10, latence_p95_max_ms=8000)
@@ -123,3 +125,20 @@ def test_repli_sur_le_seuil_absolu_si_active_peu_servie():
                           depuis_s=120, pourcentage=10).action == "progresser"
     assert evaluer_palier("v2.0.0", canary, _active(25), SEUILS,
                           depuis_s=120, pourcentage=10).action == "attendre"
+
+
+def test_changements_seuils(tmp_path):
+    chemin = tmp_path / "s.yaml"
+    chemin.write_text(yaml.safe_dump({"derive": {"score_min": 0.7}, "motif": "a"}),
+                      encoding="utf-8")
+    fichiers = {"ops/seuils_pilotage.yaml": chemin}
+    [initial] = changements_seuils([], fichiers)
+    assert initial["fichier"] == "ops/seuils_pilotage.yaml" and initial["avant"] is None
+    assert initial["apres"]["derive"]["score_min"] == 0.7 and initial["motif"] == "a"
+    journal = [{"evenement": "seuils", **initial}]
+    assert changements_seuils(journal, fichiers) == []
+    chemin.write_text(yaml.safe_dump({"derive": {"score_min": 0.68}, "motif": "b"}),
+                      encoding="utf-8")
+    [change] = changements_seuils(journal, fichiers)
+    assert change["avant"] == initial["apres"] and change["apres"]["derive"]["score_min"] == 0.68
+    assert change["empreinte"] != initial["empreinte"]
