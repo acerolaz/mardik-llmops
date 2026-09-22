@@ -1,0 +1,25 @@
+# Seuils de pilotage — config as code (même convention que eval/seuils.yaml).
+#
+# Toute modification passe par un commit et met à jour « motif ». Le pilote
+# (python -m ops.deploy piloter) journalise chaque changement (événement
+# « seuils »). Valeurs de production entre parenthèses dans les commentaires.
+
+fenetre_s: 300              # fenêtre glissante de surveillance (C2.22)
+minimum: 10                 # mesures minimales avant toute décision (C2.15)
+intervalle_s: 5             # période d'une tour du pilote
+derive:
+  score_min: 0.70           # seuil dur → rollback automatique
+  marge: 0.05               # [score_min ; score_min + marge[ → alerte
+  taux_erreur_max: 0.10
+  latence_p95_max_ms: 8000  # contrainte client : P95 < 8 s
+promotion:
+  paliers: [10, 50, 100]    # 100 = promouvoir
+  duree_min_s: 60           # production : 1800
+  requetes_min: 20          # production : 500
+  ecart_erreur_max: 0.02    # taux d'erreur canary ≤ active + 0,02
+  latence_p95_max_ms: 8000
+  score_moyen_min: 0.75
+  score_p10_min: 0.65
+capture:
+  score_max: 0.70           # confiance_globale < score_max → candidat
+motif: "seuils initiaux — score_min = seuil de relecture juriste ; fenêtres de palier courtes pour la démo live"
