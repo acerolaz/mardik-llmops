@@ -163,9 +163,19 @@ def charger_seuils_pilotage(chemin: Path | str | None = None) -> SeuilsPilotage:
     motif = str(data.get("motif") or "").strip()
     if not motif:
         raise ErreurSeuilsPilotage(f"{chemin} : clé « motif » manquante ou vide")
+    minimum_f = _nombre(data, "minimum", chemin, positif=True)
+    if not minimum_f.is_integer():
+        raise ErreurSeuilsPilotage(
+            f"{chemin} : « minimum » doit être un entier, reçu {data.get('minimum')!r}"
+        )
+    requetes_min_f = _nombre(promotion, "requetes_min", chemin, "promotion.")
+    if not requetes_min_f.is_integer():
+        raise ErreurSeuilsPilotage(
+            f"{chemin} : « promotion.requetes_min » doit être un entier, reçu {promotion.get('requetes_min')!r}"
+        )
     return SeuilsPilotage(
         fenetre_s=_nombre(data, "fenetre_s", chemin, positif=True),
-        minimum=int(_nombre(data, "minimum", chemin, positif=True)),
+        minimum=int(minimum_f),
         intervalle_s=_nombre(data, "intervalle_s", chemin, positif=True),
         derive=SeuilsDerive(
             score_min=_nombre(derive, "score_min", chemin, "derive."),
@@ -176,7 +186,7 @@ def charger_seuils_pilotage(chemin: Path | str | None = None) -> SeuilsPilotage:
         promotion=SeuilsPromotion(
             paliers=_paliers(promotion, chemin),
             duree_min_s=_nombre(promotion, "duree_min_s", chemin, "promotion."),
-            requetes_min=int(_nombre(promotion, "requetes_min", chemin, "promotion.")),
+            requetes_min=int(requetes_min_f),
             ecart_erreur_max=_nombre(promotion, "ecart_erreur_max", chemin, "promotion."),
             latence_p95_max_ms=_nombre(promotion, "latence_p95_max_ms", chemin, "promotion."),
             score_moyen_min=_nombre(promotion, "score_moyen_min", chemin, "promotion."),
