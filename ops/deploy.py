@@ -582,6 +582,22 @@ def _journaliser_seuils(registry: Registry, seuils: SeuilsPilotage) -> None:
                              resume=resume_metier("seuils", **ev))
 
 
+def _journaliser_incident_seuils(
+    registry: Registry, seuils: SeuilsPilotage, exc: ErreurSeuilsPilotage
+) -> None:
+    """Trace des seuils illisibles. Un incident d'écriture du journal ne doit
+    pas faire sortir le pilote : seul un seuil invalide au démarrage l'arrête."""
+    try:
+        _journaliser_une_fois(
+            registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
+            fichier="ops/seuils_pilotage.yaml",
+            resume=resume_metier("seuils_invalides",
+                                 fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
+        )
+    except (ErreurRegistre, OSError, json.JSONDecodeError) as incident:
+        structlog.get_logger("mardik").warning("pilotage.incident", cause=str(incident))
+
+
 def tour(
     registry: Registry, metriques: MetricsStore, seuils: SeuilsPilotage
 ) -> dict[str, Any]:
@@ -655,12 +671,7 @@ def piloter(
             try:
                 seuils = charger()
             except ErreurSeuilsPilotage as exc:
-                _journaliser_une_fois(
-                    registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
-                    fichier="ops/seuils_pilotage.yaml",
-                    resume=resume_metier("seuils_invalides",
-                                         fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
-                )
+                _journaliser_incident_seuils(registry, seuils, exc)
         try:
             tour(registry, metriques, seuils)
         except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:

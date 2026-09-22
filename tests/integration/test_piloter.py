@@ -134,3 +134,27 @@ def test_pilote_survit_a_une_panne_transitoire(registry, metriques):
     fausses = _MetriquesCassees(metriques)
     assert piloter(registry, fausses, tours=2, charger=_rapides) == 2
     assert fausses._appels >= 2
+
+
+def test_journal_illisible_pendant_un_rechargement_de_seuils(registry, metriques):
+    """Seuils invalides + journal momentanément illisible : la boucle continue."""
+    appels = {"n": 0}
+    panne = {"armee": False}
+
+    def charger():
+        appels["n"] += 1
+        if appels["n"] > 1:
+            panne["armee"] = True            # le journal tombe au moment de tracer l'incident
+            raise ErreurSeuilsPilotage("YAML invalide")
+        return BASE
+
+    vrai_journal = registry.journal
+
+    def journal_capricieux():
+        if panne["armee"]:
+            panne["armee"] = False
+            raise OSError("journal momentanément illisible")
+        return vrai_journal()
+
+    registry.journal = journal_capricieux            # type: ignore[method-assign]
+    assert piloter(registry, metriques, tours=2, charger=charger, attendre=lambda _: None) == 2
