@@ -35,6 +35,13 @@ entrée de journal ``{evenement, avant, apres, origine, …}``.
         Journalise ``rollback`` avec le motif.
 
     surveiller(...) -> dict                                   [sous-projet 4]
+        Dérive de la version surveillée (canary, sinon active) : seuils lus par
+        défaut dans ``ops/seuils_pilotage.yaml`` (paramètres explicites
+        prioritaires). Dérive critique → ``rollback`` automatique tracé
+        (``origine="auto"``) ; dérive de marge → journalise une ``alerte``
+        (une seule fois par fenêtre). Un rollback refusé (rien à annuler)
+        journalise ``pilotage_refus`` (une seule fois par fenêtre) au lieu de
+        lever.
 
 ``origine`` : ``manuel``, ``ci:<acteur GitHub>`` ou ``auto`` (surveillance).
 
@@ -56,13 +63,17 @@ import sys
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from app.llm_client import Bundle
 from app.telemetry import MetricsStore
 from eval.run_eval import Rapport, evaluer
+from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
 from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry
+from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
+from ops.signaux import filtrer
 
 RACINE = Path(__file__).resolve().parent.parent
 CANARY_PERCENT_DEFAUT = 10
@@ -450,17 +461,87 @@ def installer(
     return manifeste
 
 
+# ---------------------------------------------------------------- pilotage
+def _journaliser_une_fois(
+    registry: Registry, evenement: str, fenetre_s: float, cles: dict[str, Any], **details: Any
+) -> dict[str, Any] | None:
+    """Journalise sauf si le même événement (mêmes ``cles``) date de moins de
+    ``fenetre_s`` : une alerte ou un refus n'est pas répété à chaque tour."""
+    limite = time.time() - fenetre_s
+    for entree in reversed(registry.journal()):
+        if entree.get("ts", 0) < limite:
+            break
+        if entree.get("evenement") == evenement and all(
+            entree.get(k) == v for k, v in cles.items()
+        ):
+            return None
+    return registry.journaliser(evenement, origine="auto", **cles, **details)
+
+
 def surveiller(
     registry: Registry | None = None,
     metriques: MetricsStore | None = None,
     *,
-    fenetre_s: float = 120,
-    score_min: float = 0.7,
-    taux_erreur_max: float = 0.10,
-    latence_p95_max_ms: float = 8000,
-    minimum: int = 10,
+    fenetre_s: float | None = None,
+    score_min: float | None = None,
+    taux_erreur_max: float | None = None,
+    latence_p95_max_ms: float | None = None,
+    minimum: int | None = None,
+    seuils: SeuilsPilotage | None = None,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.surveiller — détection de dérive + rollback automatique")
+    """Dérive critique de la version surveillée → rollback automatique, tracé.
+
+    Les paramètres à ``None`` viennent de ``seuils`` (sinon de
+    ``ops/seuils_pilotage.yaml``) ; les valeurs explicites l'emportent.
+    """
+    registry = registry or Registry()
+    metriques = metriques or MetricsStore()
+    s = seuils or charger_seuils_pilotage()
+    fenetre = fenetre_s if fenetre_s is not None else s.fenetre_s
+    mini = minimum if minimum is not None else s.minimum
+    surcharges = {"score_min": score_min, "taux_erreur_max": taux_erreur_max,
+                  "latence_p95_max_ms": latence_p95_max_ms}
+    seuils_derive = replace(s.derive, **{k: v for k, v in surcharges.items() if v is not None})
+
+    index = registry.index()
+    version = version_surveillee(index)
+    if version is None:
+        return {"version": None, "mesures": 0, "derive": False, "niveau": "aucune",
+                "motif": "aucune version active", "rollback": False}
+    debut = debut_palier(registry.journal(), version) if index.get("canary") == version else None
+    mesures = filtrer(metriques.lire(depuis_s=fenetre), version, depuis_ts=debut)
+    derive = detecter_derive(version, mesures, seuils_derive, minimum=mini)
+    resultat = {"version": version, "mesures": derive.mesures, "derive": derive.critique,
+                "niveau": derive.niveau, "motif": derive.motif, "rollback": False}
+
+    if derive.niveau == "marge":
+        score = next(c for c in derive.constats if c.signal == "score_moyen")
+        _journaliser_une_fois(
+            registry, "alerte", fenetre, {"version": version, "signal": "score_moyen"},
+            valeur=score.valeur, seuil=score.seuil, motif=derive.motif,
+            resume=resume_metier("alerte", version=version, valeur=score.valeur,
+                                 seuil=score.seuil),
+        )
+    elif derive.critique:
+        c = derive.principal
+        details = {
+            "signal": c.signal, "valeur": c.valeur, "seuil": c.seuil,
+            "mesures": derive.mesures, "constats": [x.to_dict() for x in derive.constats],
+            "resume": resume_metier("rollback", version=version, signal=c.signal,
+                                    valeur=c.valeur, seuil=c.seuil, mesures=derive.mesures,
+                                    sous_seuil=derive.sous_seuil),
+        }
+        try:
+            rollback(registry, motif=derive.motif, origine="auto", **details)
+            resultat["rollback"] = True
+        except ErreurDeploiement as exc:
+            _journaliser_une_fois(
+                registry, "pilotage_refus", fenetre,
+                {"version": version, "action": "rollback"},
+                raison=str(exc), motif=derive.motif,
+                resume=resume_metier("pilotage_refus", action="rollback", raison=str(exc)),
+            )
+    return resultat
 
 
 def _afficher(donnees: dict[str, Any]) -> None:
@@ -491,7 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("surveiller")
     s.add_argument("--boucle", action="store_true")
     s.add_argument("--intervalle", type=float, default=5.0)
-    s.add_argument("--fenetre", type=float, default=120)
+    s.add_argument("--fenetre", type=float, default=None)
     for commande in (i, c, pr, r):
         commande.add_argument("--origine", default="manuel",
                               help="manuel | ci:<acteur> | auto")
@@ -531,6 +612,9 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(args.intervalle)
     except ErreurDeploiement as exc:
         print(f"REFUSÉ : {exc}", file=sys.stderr)
+        return 1
+    except ErreurSeuilsPilotage as exc:
+        print(f"SEUILS INVALIDES : {exc}", file=sys.stderr)
         return 1
     except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
         print(f"ÉCHEC : {exc}", file=sys.stderr)
