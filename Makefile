@@ -11,7 +11,7 @@ install:            ## dépendances (uv)
 
 up:                 ## app + proxy de dérive + tableau de bord + pilote (docker compose)
 	docker compose up -d --build
-	@echo "app : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard : http://localhost:8501 — pilote : docker compose logs -f pilote"
+	@echo "interface : http://localhost:8000/ — pilotage : http://localhost:8000/pilotage — API : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard brut : http://localhost:8501 — pilote : docker compose logs -f pilote"
 
 down:
 	docker compose down
