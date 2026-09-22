@@ -84,7 +84,6 @@ export function surveillerResume({ onData, onErreur, boutonPause, horodatage }) 
   }
   function planifier() {
     clearInterval(minuterie);
-    minuterie = null;
     if (enPause || document.hidden) return;
     tour();
     minuterie = setInterval(tour, PERIODE_MS);

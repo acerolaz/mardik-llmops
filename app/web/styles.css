@@ -2,48 +2,33 @@
    Palette « Legal Services » : navy d'autorité + or de confiance. */
 @import url("https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600;700&family=Lato:wght@400;700&display=swap");
 
+/* Thème : light-dark(clair, sombre) suit color-scheme — le système par défaut,
+   forcé par [data-theme] quand l'utilisateur bascule. */
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 :root {
-  color-scheme: light;
-  --primary: #1E3A8A;
-  --on-primary: #FFFFFF;
-  --accent: #B45309;
-  --on-accent: #FFFFFF;
-  --bg: #F8FAFC;
-  --card: #FFFFFF;
-  --fg: #0F172A;
-  --muted-fg: #64748B;
-  --muted: #E9EEF5;
-  --border: #CBD5E1;
-  --v1: #64748B;
-  --v2: #1E3A8A;
-  --ok: #15803D;
-  --warn: #B45309;
-  --danger: #DC2626;
-  --info: #1E40AF;
-  --ombre: 0 1px 2px rgb(15 23 42 / 0.06);
+  --primary: light-dark(#1E3A8A, #93B4F5);
+  --on-primary: light-dark(#FFFFFF, #0B1220);
+  --accent: light-dark(#B45309, #F59E0B);
+  --on-accent: light-dark(#FFFFFF, #0B1220);
+  --bg: light-dark(#F8FAFC, #0B1220);
+  --card: light-dark(#FFFFFF, #111A2E);
+  --fg: light-dark(#0F172A, #E2E8F0);
+  --muted-fg: light-dark(#64748B, #94A3B8);
+  --muted: light-dark(#E9EEF5, #1A2540);
+  --border: light-dark(#CBD5E1, #23304A);
+  --v1: light-dark(#64748B, #94A3B8);
+  --v2: light-dark(#1E3A8A, #93B4F5);
+  --ok: light-dark(#15803D, #4ADE80);
+  --warn: light-dark(#B45309, #FBBF24);
+  --danger: light-dark(#DC2626, #F87171);
+  --info: light-dark(#1E40AF, #93B4F5);
+  --ombre: 0 1px 2px light-dark(rgb(15 23 42 / 0.06), transparent);
   --rayon: 10px;
   --police-titre: "EB Garamond", Georgia, "Times New Roman", serif;
   --police-texte: "Lato", system-ui, -apple-system, "Segoe UI", sans-serif;
   --duree: 200ms;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --primary: #93B4F5; --on-primary: #0B1220; --accent: #F59E0B; --on-accent: #0B1220;
-    --bg: #0B1220; --card: #111A2E; --fg: #E2E8F0; --muted-fg: #94A3B8; --muted: #1A2540;
-    --border: #23304A; --v1: #94A3B8; --v2: #93B4F5;
-    --ok: #4ADE80; --warn: #FBBF24; --danger: #F87171; --info: #93B4F5;
-    --ombre: none;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --primary: #93B4F5; --on-primary: #0B1220; --accent: #F59E0B; --on-accent: #0B1220;
-  --bg: #0B1220; --card: #111A2E; --fg: #E2E8F0; --muted-fg: #94A3B8; --muted: #1A2540;
-  --border: #23304A; --v1: #94A3B8; --v2: #93B4F5;
-  --ok: #4ADE80; --warn: #FBBF24; --danger: #F87171; --info: #93B4F5;
-  --ombre: none;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

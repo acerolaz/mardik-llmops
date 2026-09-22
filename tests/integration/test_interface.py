@@ -85,4 +85,4 @@ def test_fichiers_statiques(client, chemin):
 
 
 def test_exemples_hors_dossier_refuses(client):
-    assert client.get("/exemples/../../app/main.py").status_code == 404
+    assert client.get("/exemples/..%2f..%2fapp%2fmain.py").status_code == 404
