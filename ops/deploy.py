@@ -42,11 +42,14 @@ Ligne de commande : ``python -m ops.deploy publier [v2.0.0] [--commit SHA] [--ra
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +59,7 @@ from eval.run_eval import Rapport, evaluer
 from ops.registry import MOTIF_VERSION, ErreurRegistre, Registry
 
 RACINE = Path(__file__).resolve().parent.parent
+CANARY_PERCENT_DEFAUT = 10
 
 
 class ErreurDeploiement(RuntimeError):
@@ -236,18 +240,127 @@ def charger_rapport(chemin: Path | str) -> Rapport:
         raise ErreurDeploiement(f"rapport de gate incomplet : {chemin} ({exc})") from exc
 
 
-def deployer_canary(
-    version: str, pourcentage: int | None = None, registry: Registry | None = None
+# ------------------------------------------------------------- transitions
+@contextmanager
+def _verrou(registry: Registry) -> Iterator[None]:
+    """Verrou exclusif inter-processus : la CI et la surveillance (SP4) écrivent
+    toutes deux l'index ; une seule transition à la fois."""
+    with (registry.root / "index.lock").open("a") as fichier:
+        fcntl.flock(fichier, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fichier, fcntl.LOCK_UN)
+
+
+def _etat(index: dict[str, Any]) -> dict[str, Any]:
+    return {cle: valeur for cle, valeur in index.items() if cle != "mis_a_jour"}
+
+
+def _transition(
+    registry: Registry,
+    evenement: str,
+    calcul: Callable[[dict[str, Any]], dict[str, Any]],
+    *,
+    origine: str,
+    **details: Any,
 ) -> dict[str, Any]:
-    raise NotImplementedError("deploy.deployer_canary — X % du trafic vers la version")
+    """Sous verrou : état avant → ``calcul`` (lève si refus) → index écrit → journal."""
+    with _verrou(registry):
+        avant = _etat(registry.index())
+        try:
+            apres = calcul(dict(avant))
+        except ErreurRegistre as exc:
+            raise ErreurDeploiement(str(exc)) from exc
+        registry.ecrire_index(apres)
+        registry.journaliser(evenement, avant=avant, apres=apres, origine=origine, **details)
+    return registry.index()
 
 
-def promouvoir(version: str, registry: Registry | None = None) -> dict[str, Any]:
-    raise NotImplementedError("deploy.promouvoir — la version devient active à 100 %")
+def _pourcentage_par_defaut() -> int:
+    brut = os.environ.get("CANARY_PERCENT", "").strip()
+    if not brut:
+        return CANARY_PERCENT_DEFAUT
+    try:
+        return int(brut)
+    except ValueError as exc:
+        raise ErreurDeploiement(f"CANARY_PERCENT invalide : {brut!r} (attendu un entier)") from exc
 
 
-def rollback(registry: Registry | None = None, motif: str = "manuel") -> dict[str, Any]:
-    raise NotImplementedError("deploy.rollback — retour arrière en une opération")
+def deployer_canary(
+    version: str,
+    pourcentage: int | None = None,
+    registry: Registry | None = None,
+    *,
+    origine: str = "manuel",
+) -> dict[str, Any]:
+    """Route ``pourcentage`` % du trafic vers ``version`` ; même version = étape suivante."""
+    registry = registry or Registry()
+    if pourcentage is None:
+        pourcentage = _pourcentage_par_defaut()
+
+    def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        registry.manifest(version)
+        if index.get("active") == version:
+            raise ErreurDeploiement(f"{version} est déjà la version active")
+        if not 1 <= pourcentage <= 99:
+            raise ErreurDeploiement(
+                f"pourcentage canary {pourcentage} hors de [1, 99] (100 % : promouvoir)"
+            )
+        en_cours = index.get("canary")
+        if en_cours not in (None, version):
+            raise ErreurDeploiement(
+                f"canary {en_cours} déjà en cours : rollback ou promotion d'abord"
+            )
+        return {**index, "canary": version, "canary_percent": pourcentage}
+
+    return _transition(
+        registry, "canary", calcul, origine=origine, version=version, pourcentage=pourcentage
+    )
+
+
+def promouvoir(
+    version: str, registry: Registry | None = None, *, origine: str = "manuel"
+) -> dict[str, Any]:
+    """``version`` devient active à 100 % ; l'ancienne active devient ``precedente``."""
+    registry = registry or Registry()
+
+    def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        registry.manifest(version)
+        if index.get("active") == version:
+            raise ErreurDeploiement(f"{version} est déjà la version active")
+        en_cours = index.get("canary")
+        if en_cours not in (None, version):
+            raise ErreurDeploiement(
+                f"canary {en_cours} en cours : on ne promeut pas {version} par-dessus"
+            )
+        return {
+            **index,
+            "precedente": index.get("active"),
+            "active": version,
+            "canary": None,
+            "canary_percent": 0,
+        }
+
+    return _transition(registry, "promotion", calcul, origine=origine, version=version)
+
+
+def rollback(
+    registry: Registry | None = None, motif: str = "manuel", *, origine: str = "manuel"
+) -> dict[str, Any]:
+    """Retour arrière en une opération, sans rebuild : retire le canary s'il y en a
+    un, sinon revient à ``precedente`` (un seul niveau)."""
+    registry = registry or Registry()
+
+    def calcul(index: dict[str, Any]) -> dict[str, Any]:
+        if index.get("canary") is not None:
+            return {**index, "canary": None, "canary_percent": 0}
+        precedente = index.get("precedente")
+        if precedente is None:
+            raise ErreurDeploiement("rien à annuler : ni canary en cours ni version précédente")
+        return {**index, "active": precedente, "precedente": None}
+
+    return _transition(registry, "rollback", calcul, origine=origine, motif=motif)
 
 
 def surveiller(
