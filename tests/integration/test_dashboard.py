@@ -144,3 +144,32 @@ def test_palier_compte_toutes_les_requetes_du_palier(metriques, registry, tmp_pa
     r = resume(metriques, registry=registry, fenetre_s=300, candidats=tmp_path / "absent.jsonl")
     assert r["total"] == 3                      # la fenêtre ne montre que les 3 récentes
     assert r["palier"]["requetes"] == 8         # le palier en compte 8, comme le pilote
+
+
+def test_sources_illisibles_signalees_sans_500(metriques, registry, tmp_path, monkeypatch):
+    """Un fichier de candidats illisible ne doit pas emporter toute la page."""
+    from ops import dashboard
+
+    _mesures(metriques, "v1.0.0", 3, score=None)
+
+    def _illisible(chemin=None):
+        raise OSError("eval/candidats.jsonl : permission refusée")
+
+    monkeypatch.setattr(dashboard, "candidats_en_attente", _illisible)
+    r = resume(metriques, registry=registry)
+    assert r["par_version"]["v1.0.0"]["requetes"] == 3        # le reste est produit
+    assert r["candidats"] == 0
+    assert any("candidats illisibles" in a for a in r["alertes"])
+    assert "candidats illisibles" in rendre_texte(r)
+
+
+def test_metriques_illisibles_signalees_sans_500(metriques, registry, monkeypatch):
+    """Les métriques illisibles ne doivent pas emporter toute la page."""
+    _canary(registry)
+    _mesures(metriques, "v2.0.0", 12, score=0.72)
+
+    monkeypatch.setattr(metriques, "lire", lambda depuis_s: (_ for _ in ()).throw(OSError("metrics.jsonl illisible")))
+    r = resume(metriques, registry=registry)
+    assert r["palier"] is None
+    assert any("métriques illisibles" in a for a in r["alertes"])
+    assert "métriques illisibles" in rendre_texte(r)

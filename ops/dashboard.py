@@ -43,7 +43,7 @@ from typing import Any
 from app.capture import candidats_en_attente
 from app.telemetry import Mesure, MetricsStore
 from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
-from ops.registry import Registry
+from ops.registry import ErreurRegistre, Registry
 from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
 from ops.signaux import agreger, filtrer, histogramme, scores, serie_par_minute
 
@@ -120,8 +120,16 @@ def resume(
         except ErreurSeuilsPilotage as exc:
             alertes.append(f"seuils invalides : {exc}")
     fenetre = fenetre_s if fenetre_s is not None else (seuils.fenetre_s if seuils else 300)
-    mesures = metriques.lire(depuis_s=fenetre)
-    index, journal = registry.index(), registry.journal()
+    try:
+        mesures = metriques.lire(depuis_s=fenetre)
+    except (OSError, json.JSONDecodeError) as exc:
+        alertes.append(f"métriques illisibles : {exc}")
+        mesures = []
+    try:
+        index, journal = registry.index(), registry.journal()
+    except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
+        alertes.append(f"registre illisible : {exc}")
+        index, journal = {}, []
 
     surveillee = version_surveillee(index)
     if seuils is not None and surveillee is not None:
@@ -142,13 +150,24 @@ def resume(
                 valeur=c.valeur, seuil=c.seuil,
             ))
 
+    try:
+        palier = _palier(index, journal, metriques, seuils, maintenant)
+    except (OSError, json.JSONDecodeError) as exc:
+        alertes.append(f"métriques illisibles : {exc}")
+        palier = None
+    try:
+        candidats_en_attente_de_versement = len(candidats_en_attente(candidats))
+    except (OSError, json.JSONDecodeError) as exc:
+        alertes.append(f"candidats illisibles : {exc}")
+        candidats_en_attente_de_versement = 0
+
     return {
         "fenetre_s": fenetre,
         "total": len(mesures),
         "par_version": _par_version(mesures),
-        "palier": _palier(index, journal, metriques, seuils, maintenant),
+        "palier": palier,
         "alertes": alertes,
-        "candidats": len(candidats_en_attente(candidats)),
+        "candidats": candidats_en_attente_de_versement,
         "journal": journal[-5:],
     }
 
