@@ -89,6 +89,27 @@ def test_le_gate_rejoue_le_contrat_verse(candidats, contrats_courts, attendus, r
     assert "c05" in rapport.par_contrat
 
 
+def test_echec_d_attendus_ne_laisse_pas_de_contrat_orphelin(
+    candidats, contrats_courts, attendus, registry, monkeypatch
+):
+    """Un versement interrompu ne doit pas bloquer les versements suivants."""
+    from eval import enrichir
+
+    def _echec(chemin, data):
+        raise OSError("disque plein")
+
+    monkeypatch.setattr(enrichir, "_ajouter_ligne", _echec)
+    with pytest.raises(OSError):
+        _verser(candidats, contrats_courts, attendus, registry)
+    assert not (contrats_courts / "c05.txt").exists()
+    assert not list(contrats_courts.glob("*.tmp"))
+
+    monkeypatch.undo()
+    ligne = _verser(candidats, contrats_courts, attendus, registry)
+    assert ligne["contrat_id"] == "c05"
+    assert (contrats_courts / "c05.txt").exists()
+
+
 def test_cli(candidats, capsys, monkeypatch):
     monkeypatch.setenv("CANDIDATS_PATH", str(candidats))
     assert main(["lister"]) == 0

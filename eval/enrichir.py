@@ -93,8 +93,17 @@ def verser(
         "seuil_note": seuil_note,
         "origine": "production",
     }
-    fichier.write_text(texte, encoding="utf-8")
-    _ajouter_ligne(Path(attendus), ligne)
+    # Le contrat est publié en dernier, par renommage atomique : si l'ajout à
+    # ``attendus.jsonl`` échoue, aucun ``cNN.txt`` orphelin ne reste, sinon la
+    # garde « le contrat existe déjà » bloquerait tous les versements suivants.
+    provisoire = fichier.with_name(f"{contrat_id}.txt.tmp")
+    provisoire.write_text(texte, encoding="utf-8")
+    try:
+        _ajouter_ligne(Path(attendus), ligne)
+    except OSError:
+        provisoire.unlink(missing_ok=True)
+        raise
+    os.replace(provisoire, fichier)
     _ajouter_ligne_verrouillee(chemin, {
         "type": "verse",
         "id": id_candidat,
