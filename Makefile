@@ -37,7 +37,7 @@ test-unit:          ## pipeline v2, gate, versions, routage, transitions de dép
 test-integration:   ## remédiation + v2 + gate + publication + gateway + CLI de déploiement : verts
 	MOCK=on uv run pytest -q tests/integration
 
-test-acceptance:    ## les 10 tests du brief : 8 verts, 2 rouges (sous-projet 4)
+test-acceptance:    ## les 10 tests du brief : 9 verts, 1 rouge (rollback automatique, sous-projet 4)
 	MOCK=on uv run pytest -v tests/acceptance
 
 eval:               ## gate sur le VRAI modèle, seuils de eval/seuils.yaml (VERSION=v2, ARGS="--essais 3 --sortie eval/rapport.json")
