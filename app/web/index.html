@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mardik — Analyse</title>
+  <meta name="description" content="Analyse de contrats Mardik : comparer v1 et v2, ou passer par la gateway canary.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/analyse.js"></script>
+</head>
+<body>
+  <header class="entete">
+    <a class="marque" href="/"><span id="logo"></span>Mardik</a>
+    <nav class="nav" aria-label="Navigation principale">
+      <a href="/" aria-current="page">Analyse</a>
+      <a href="/pilotage">Pilotage</a>
+    </nav>
+    <button id="theme" class="bouton bouton-fantome" type="button" aria-label="Changer de thème"></button>
+  </header>
+  <main>
+    <section aria-labelledby="t-kpi">
+      <h1 id="t-kpi" class="visuellement-cache">Analyse de contrats — indicateurs clés</h1>
+      <div class="grille-kpi">
+        <article class="carte" aria-labelledby="t-p95">
+          <h2 id="t-p95">Latence P95 vs SLO 8 s</h2>
+          <div id="kpi-p95" aria-live="polite"><div class="squelette"><span></span><span></span></div></div>
+        </article>
+        <article class="carte" aria-labelledby="t-canary">
+          <h2 id="t-canary">Canary en cours</h2>
+          <div id="kpi-canary" aria-live="polite"><div class="squelette"><span></span><span></span></div></div>
+        </article>
+      </div>
+      <div class="barre-maj barre-maj-kpi">
+        <span id="maj">en attente…</span>
+        <button id="pause" class="bouton" type="button" aria-pressed="false">Pause</button>
+        <a href="/pilotage">Tout le pilotage →</a>
+      </div>
+    </section>
+
+    <form id="form-analyse" class="carte" novalidate>
+      <div class="champ">
+        <div class="champ-tete">
+          <label for="texte">Texte du contrat</label>
+          <div>
+            <button class="bouton" type="button" data-exemple="c02">Exemple court</button>
+            <button class="bouton" type="button" data-exemple="c07">Exemple long</button>
+          </div>
+        </div>
+        <textarea id="texte" name="texte" aria-describedby="compteur erreur-texte"
+                  placeholder="Collez ici le texte intégral du contrat…"></textarea>
+        <p id="compteur" class="aide">0 caractère</p>
+        <p id="erreur-texte" class="erreur-champ" role="alert"></p>
+      </div>
+      <div class="actions">
+        <fieldset class="modes">
+          <legend>Mode d'analyse</legend>
+          <label><input type="radio" name="mode" value="comparer" checked> Comparer v1 / v2</label>
+          <label><input type="radio" name="mode" value="gateway"> Via la gateway</label>
+        </fieldset>
+        <button id="analyser" class="bouton bouton-primaire" type="submit">Analyser</button>
+      </div>
+    </form>
+
+    <div id="resultats" class="resultats"></div>
+  </main>
+</body>
+</html>

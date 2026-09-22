@@ -1,4 +1,4 @@
-.PHONY: install up down serve proxy dashboard pilote calibrer candidats verser etat test test-unit test-integration test-acceptance eval traffic ci fixtures lint fmt clean
+.PHONY: install up down serve proxy dashboard pilote calibrer candidats verser etat test test-unit test-integration test-acceptance test-web eval traffic ci fixtures lint fmt clean
 
 MODE ?= normal
 VERSION ?= v2
@@ -9,20 +9,20 @@ APP_URL ?= http://localhost:8000
 install:            ## dépendances (uv)
 	uv sync
 
-up:                 ## app + proxy de dérive + tableau de bord + pilote (docker compose)
+up:                 ## app + interface web + proxy de dérive + tableau de bord brut + pilote (docker compose)
 	docker compose up -d --build
-	@echo "app : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard : http://localhost:8501 — pilote : docker compose logs -f pilote"
+	@echo "interface : http://localhost:8000/ — pilotage : http://localhost:8000/pilotage — API : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard brut : http://localhost:8501 — pilote : docker compose logs -f pilote"
 
 down:
 	docker compose down
 
-serve:              ## app en local, sans docker (le proxy doit tourner : make proxy)
+serve:              ## app + interface web (http://localhost:8000/) en local, sans docker (le proxy doit tourner : make proxy)
 	uv run uvicorn app.main:app --reload --port 8000
 
 proxy:              ## proxy de dérive en local
 	uv run python -m ops.drift_proxy
 
-dashboard:          ## tableau de bord en local (texte) — DASH=serve pour la page HTML
+dashboard:          ## tableau de bord brut en local (texte) — DASH=serve pour sa page HTML :8501
 	uv run python -m ops.dashboard $(if $(filter serve,$(DASH)),--serve,)
 
 pilote:             ## boucle du pilote en local : surveillance, rollback auto, promotion canary
@@ -46,8 +46,11 @@ test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 test-unit:          ## pipeline v2, gate, versions, routage, transitions, workflows, signaux, pilotage, seuils, anonymisation : verts
 	MOCK=on uv run pytest -q tests/unit
 
-test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard : verts
+test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard, interface : verts
 	MOCK=on uv run pytest -q tests/integration
+
+test-web:           ## module JS partagé de l'interface (Node, sans dépendance)
+	node --test "tests/web/*.test.mjs"
 
 test-acceptance:    ## les 10 tests du brief : tous verts
 	MOCK=on uv run pytest -v tests/acceptance
@@ -63,12 +66,14 @@ fixtures:           ## (ré)enregistre les fixtures MOCK en appelant le vrai mod
 	MOCK=record uv run python -m eval.run_eval --version $(VERSION)
 	@echo "fixtures enregistrées dans eval/fixtures/ — à committer"
 
-ci:                 ## l'équivalent local du workflow GitHub (MOCK=on) : lint, tests, gate, acceptance
+ci:                 ## l'équivalent local du workflow GitHub (MOCK=on) : lint, tests, tests JS, gate, acceptance
 	uv run ruff check .
 	@if command -v actionlint >/dev/null; then actionlint .github/workflows/*.yml; \
 	else echo "actionlint absent : workflows vérifiés par tests/unit/test_workflows.py seulement"; fi
 	MOCK=on uv run pytest -q tests/unit
 	MOCK=on uv run pytest -q tests/integration
+	@if command -v node >/dev/null; then node --test "tests/web/*.test.mjs"; \
+	else echo "node absent : tests JS de l'interface ignorés (make test-web)"; fi
 	MOCK=on uv run python -m eval.run_eval --version v2
 	MOCK=on uv run pytest -q tests/acceptance
 	@echo "publication, canary : ci.yml ; promotion, rollback : promotion.yml, rollback.yml — en CI uniquement"
