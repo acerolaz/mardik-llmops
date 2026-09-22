@@ -52,7 +52,11 @@ function carteVersion([version, s]) {
 }
 
 function ligneJournal(e) {
-  const date = e.date ? new Date(e.date).toLocaleString("fr-FR") : "—";
+  const date = (() => {
+    if (!e.date) return "—";
+    const d = new Date(e.date);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("fr-FR");
+  })();
   const badge = BADGES[e.evenement] ?? "neutre";
   return `<tr>
     <td class="chiffre">${esc(date)}</td>
