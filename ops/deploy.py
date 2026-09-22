@@ -582,22 +582,6 @@ def _journaliser_seuils(registry: Registry, seuils: SeuilsPilotage) -> None:
                              resume=resume_metier("seuils", **ev))
 
 
-def _journaliser_incident_seuils(
-    registry: Registry, seuils: SeuilsPilotage, exc: ErreurSeuilsPilotage
-) -> None:
-    """Trace des seuils illisibles. Un incident d'écriture du journal ne doit
-    pas faire sortir le pilote : seul un seuil invalide au démarrage l'arrête."""
-    try:
-        _journaliser_une_fois(
-            registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
-            fichier="ops/seuils_pilotage.yaml",
-            resume=resume_metier("seuils_invalides",
-                                 fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
-        )
-    except (ErreurRegistre, OSError, json.JSONDecodeError) as incident:
-        structlog.get_logger("mardik").warning("pilotage.incident", cause=str(incident))
-
-
 def tour(
     registry: Registry, metriques: MetricsStore, seuils: SeuilsPilotage
 ) -> dict[str, Any]:
@@ -609,18 +593,15 @@ def tour(
     index = registry.index()
     canary = index.get("canary")
     debut = debut_palier(registry.journal(), canary) if canary else None
-
-    if canary is not None and debut is None:
-        # Canary à l'index, mais aucun début de palier au journal (journal perdu
-        # ou tronqué) : sans trace, la version resterait figée sans explication.
-        raison = "aucun début de palier au journal (journal perdu ou tronqué)"
-        _journaliser_une_fois(
-            registry, "pilotage_refus", seuils.fenetre_s,
-            {"version": canary, "action": "palier"},
-            raison=raison,
-            resume=resume_metier("pilotage_refus", action="palier", raison=raison),
-        )
     if canary is None or debut is None:
+        if canary is not None:   # sans trace, la version resterait figée sans explication
+            raison = "aucun début de palier au journal (journal perdu ou tronqué)"
+            _journaliser_une_fois(
+                registry, "pilotage_refus", seuils.fenetre_s,
+                {"version": canary, "action": "palier"},
+                raison=raison,
+                resume=resume_metier("pilotage_refus", action="palier", raison=raison),
+            )
         return {"surveillance": surveillance, "palier": None}
 
     maintenant = time.time()
@@ -682,7 +663,15 @@ def piloter(
             try:
                 seuils = charger()
             except ErreurSeuilsPilotage as exc:
-                _journaliser_incident_seuils(registry, seuils, exc)
+                try:
+                    _journaliser_une_fois(
+                        registry, "seuils_invalides", seuils.fenetre_s, {"raison": str(exc)},
+                        fichier="ops/seuils_pilotage.yaml",
+                        resume=resume_metier("seuils_invalides",
+                                             fichier="ops/seuils_pilotage.yaml", raison=str(exc)),
+                    )
+                except (ErreurRegistre, OSError, json.JSONDecodeError) as incident:
+                    structlog.get_logger("mardik").warning("pilotage.incident", cause=str(incident))
         try:
             tour(registry, metriques, seuils)
         except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:

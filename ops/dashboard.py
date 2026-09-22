@@ -36,6 +36,7 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,19 @@ def _par_version(mesures: list[Mesure]) -> dict[str, dict[str, Any]]:
     return par_version
 
 
+_ILLISIBLE = (OSError, json.JSONDecodeError)
+
+
+def _lu(lire: Callable[[], Any], defaut: Any, alertes: list[str], alerte: str,
+        erreurs: tuple[type[Exception], ...] = _ILLISIBLE) -> Any:
+    """Source illisible → alerte et ``defaut`` : la page se dégrade, elle ne tombe pas en 500."""
+    try:
+        return lire()
+    except erreurs as exc:
+        alertes.append(f"{alerte} : {exc}")
+        return defaut
+
+
 def _palier(
     index: dict[str, Any],
     journal: list[dict[str, Any]],
@@ -82,11 +96,8 @@ def _palier(
     if canary is None:
         return None
     debut = debut_palier(journal, canary)
-    if debut is None:
-        requetes = 0
-    else:
-        du_palier = metriques.lire(depuis_s=max(maintenant - debut, 0) + 1)
-        requetes = len(filtrer(du_palier, canary, depuis_ts=debut))
+    requetes = 0 if debut is None else len(filtrer(
+        metriques.lire(depuis_s=max(maintenant - debut, 0) + 1), canary, depuis_ts=debut))
     return {
         "version": canary,
         "pourcentage": index.get("canary_percent"),
@@ -120,16 +131,9 @@ def resume(
         except ErreurSeuilsPilotage as exc:
             alertes.append(f"seuils invalides : {exc}")
     fenetre = fenetre_s if fenetre_s is not None else (seuils.fenetre_s if seuils else 300)
-    try:
-        mesures = metriques.lire(depuis_s=fenetre)
-    except (OSError, json.JSONDecodeError) as exc:
-        alertes.append(f"métriques illisibles : {exc}")
-        mesures = []
-    try:
-        index, journal = registry.index(), registry.journal()
-    except (ErreurRegistre, OSError, json.JSONDecodeError) as exc:
-        alertes.append(f"registre illisible : {exc}")
-        index, journal = {}, []
+    mesures = _lu(lambda: metriques.lire(depuis_s=fenetre), [], alertes, "métriques illisibles")
+    index, journal = _lu(lambda: (registry.index(), registry.journal()), ({}, []), alertes,
+                         "registre illisible", (ErreurRegistre, *_ILLISIBLE))
 
     surveillee = version_surveillee(index)
     if seuils is not None and surveillee is not None:
@@ -150,24 +154,17 @@ def resume(
                 valeur=c.valeur, seuil=c.seuil,
             ))
 
-    try:
-        palier = _palier(index, journal, metriques, seuils, maintenant)
-    except (OSError, json.JSONDecodeError) as exc:
-        alertes.append(f"métriques illisibles : {exc}")
-        palier = None
-    try:
-        candidats_en_attente_de_versement = len(candidats_en_attente(candidats))
-    except (OSError, json.JSONDecodeError) as exc:
-        alertes.append(f"candidats illisibles : {exc}")
-        candidats_en_attente_de_versement = 0
-
+    palier = _lu(lambda: _palier(index, journal, metriques, seuils, maintenant), None, alertes,
+                 "métriques illisibles")
+    candidats_n = _lu(lambda: len(candidats_en_attente(candidats)), 0, alertes,
+                      "candidats illisibles")
     return {
         "fenetre_s": fenetre,
         "total": len(mesures),
         "par_version": _par_version(mesures),
         "palier": palier,
         "alertes": alertes,
-        "candidats": candidats_en_attente_de_versement,
+        "candidats": candidats_n,
         "journal": journal[-5:],
     }
 
