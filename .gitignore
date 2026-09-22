@@ -31,3 +31,6 @@ ops/registry/journal.jsonl
 ops/registry/v[2-9].*/
 ops/registry/v1.[1-9]*/
 ops/registry/v1.0.[1-9]*/
+
+# Worktrees git locaux (Claude Code)
+.claude/worktrees/
