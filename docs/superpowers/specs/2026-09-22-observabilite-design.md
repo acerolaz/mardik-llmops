@@ -43,7 +43,7 @@ version ; rollback à un niveau ; transitions sérialisées par `_verrou`.
 - `ops/dashboard.py` : `resume`, `rendre_texte`, `rendre_html`
 - `app/capture.py` : anonymisation + `capturer` ; hook sur `POST /v2/analyse` (`app/api_v2.py`)
 - `eval/enrichir.py` : CLI `lister`, `verser`
-- `.gitignore` : `eval/candidats.jsonl`
+- `.gitignore` : `eval/candidats.jsonl` ; `tests/conftest.py` : `CANDIDATS_PATH` dans `tmp_path` (une ligne)
 - `docs/exploitation.md` : §6 « Surveillance et seuils », §7 « Preuve d'exécution » (les §4–5 appartiennent à SP3)
 - Tests unitaires et d'intégration de ces unités
 
@@ -221,6 +221,7 @@ class Derive:
     niveau: str                  # "aucune" | "marge" | "critique" | "echantillon_insuffisant"
     constats: list[Constat]
     motif: str                   # ex. "score moyen 0.52 < 0.70"
+    sous_seuil: int              # scores individuels < score_min (résumé métier)
 
 @dataclass(frozen=True)
 class DecisionPalier:
@@ -235,13 +236,13 @@ class DecisionPalier:
 - `debut_palier(journal, version) -> float | None` : `ts` de la dernière entrée
   `canary` de `version` (quelle que soit son `origine`), à condition qu'aucun
   `rollback` ne la suive ; sinon `None`.
-- `detecter_derive(mesures, seuils_derive, *, minimum) -> Derive` : `critique`
+- `detecter_derive(version, mesures, seuils_derive, *, minimum) -> Derive` : `critique`
   si l'un des seuils durs est franchi (score, erreurs, P95 — le score n'est pas
   évalué s'il est `None`) ; sinon `marge` si le score moyen est dans la marge ;
   `echantillon_insuffisant` sous `minimum` mesures. Le `motif` nomme le premier
   signal critique (ordre : score, erreurs, P95) — le test d'acceptance exige
   que « score » y figure.
-- `evaluer_palier(mesures_canary, mesures_active, seuils_promotion, *, depuis_s, pourcentage) -> DecisionPalier` :
+- `evaluer_palier(version, mesures_canary, mesures_active, seuils, *, depuis_s, pourcentage) -> DecisionPalier` :
   `attendre` tant que `depuis_s < duree_min_s` ou `requetes < requetes_min`, ou
   qu'un critère échoue (le motif dit lequel) ; sinon `progresser` vers le palier
   suivant de `paliers`, ou `promouvoir` si le suivant est 100. Le critère
@@ -255,7 +256,7 @@ class DecisionPalier:
   français lisible par un non-technicien (B2.5). Exemples :
   - rollback/score : « Version v2.0.0 retirée : 15 analyses sur 27 jugées peu fiables (score < 0,70). »
   - rollback/erreurs : « Version v2.0.0 retirée : 12 % des analyses en échec (maximum toléré 10 %). »
-  - rollback/latence : « Version v2.0.0 retirée : 5 % des analyses dépassent 9,1 s (maximum 8 s). »
+  - rollback/latence : « Version v2.0.0 retirée : analyses trop lentes (P95 9,1 s, maximum 8,0 s). »
   - canary : « Version v2.0.0 étendue à 50 % des clients : 23 analyses conformes en 64 s. »
   - promotion : « Version v2.0.0 servie à tous les clients : tous les critères tenus. »
   - alerte : « Version v2.0.0 à surveiller : score moyen 0,72, proche du seuil 0,70. »
@@ -319,7 +320,7 @@ la boucle continue. `tours` (tests) borne le nombre de tours ; `attendre` est
 injectable. Redémarrer `pilote` ne perd rien : le palier et son début sont relus
 dans le journal.
 
-CLI : `python -m ops.deploy piloter [--intervalle S]`. Le service
+CLI : `python -m ops.deploy piloter [--tours N]` (la période vient de `intervalle_s`). Le service
 docker-compose `pilote` la lance (mêmes volumes `ops/`, `eval/` que `app`) ;
 `make pilote` en local.
 
@@ -334,7 +335,8 @@ docker-compose `pilote` la lance (mêmes volumes `ops/`, `eval/` que `app`) ;
   au juriste de le vérifier avant versement (§8.2).
 - `Capture` (dataclass : `chemin`, `score_max`) fournie par la dépendance
   `get_capture()` (chemin `CANDIDATS_PATH`, sinon `eval/candidats.jsonl` ;
-  `score_max` lu dans les seuils de pilotage) — surchargeable dans les tests.
+  `score_max=None` → lu dans les seuils de pilotage **au moment de la capture**,
+  jamais à la résolution de la dépendance) — surchargeable dans les tests.
 - `capturer(capture, texte, reponse) -> str | None` : si
   `reponse.confiance_globale < capture.score_max`, ajoute une ligne
   `{"type": "candidat", "id": "cand-<empreinte[:10]>", "date", "version",
