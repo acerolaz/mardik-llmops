@@ -33,6 +33,7 @@ def environnement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("REGISTRY_PATH", str(tmp_path / "registry"))
     monkeypatch.setenv("CANDIDATS_PATH", str(tmp_path / "candidats.jsonl"))
     monkeypatch.setenv("OTEL_TRACES", "off")
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
     return tmp_path
 
 

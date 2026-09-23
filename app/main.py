@@ -19,8 +19,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import api_v1, api_v2, gateway, pilotage
+from app.config import SentrySettings
 from app.pipeline import DocumentTropLong
 from app.routage import ErreurRoutage
+from app.sentry import init_sentry
 from app.telemetry import build_default_telemetry
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -30,7 +32,8 @@ EXEMPLES = RACINE / "eval" / "contrats"
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Mardik — analyse de contrats", version="2.0.0")
-    build_default_telemetry()
+    telemetry = build_default_telemetry()
+    init_sentry(SentrySettings(), telemetry.provider)
 
     app.include_router(api_v1.router)
     app.include_router(api_v2.router)
