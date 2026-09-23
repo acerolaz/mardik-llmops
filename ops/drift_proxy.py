@@ -68,7 +68,6 @@ def _amont(provider: str, chemin: str) -> tuple[str, dict[str, str]]:
         base = os.environ.get("AZURE_AI_INFERENCE_ENDPOINT", "").rstrip("/")
         if not base:
             raise ValueError("AZURE_AI_INFERENCE_ENDPOINT non définie")
-        sep = "&" if "?" in chemin else "?"
         return f"{base}/{chemin}", {}
     base = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
     return f"{base}/{chemin}", {}
