@@ -27,7 +27,7 @@ prompt: |
 
 parametres:
   temperature: 0.0                # déterminisme maximal : un gate stable
-  max_tokens: 800                 # une section regroupe plusieurs articles
+  max_tokens: 4096                # une section regroupe plusieurs articles
   seed: 42                        # reproductibilité
   contexte_max_caracteres: 6000   # taille maximale d'une section (découpage)
   taille_max_document: 200000     # au-delà : 413, jamais de troncature
