@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import time
 
-import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.llm_client import TYPES_CLAUSES, Bundle, ErreurLLM, LLMClient
+from app.sentry import etiqueter_version
 from app.telemetry import Mesure, Telemetry, build_default_telemetry
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -61,7 +61,6 @@ def analyser_v1(texte: str, client: LLMClient, telemetry: Telemetry) -> ReponseA
     debut = time.perf_counter()
     with telemetry.tracer.start_as_current_span("analyse.requete") as span:
         span.set_attribute("mardik.version", bundle.version)
-        sentry_sdk.set_tag("mardik.version", bundle.version)   # scope de la requête : suit aussi les erreurs
         span.set_attribute("mardik.tronque", tronque)
         try:
             with telemetry.tracer.start_as_current_span("llm.appel") as span_llm:
@@ -124,6 +123,7 @@ def analyse(
     client: LLMClient = Depends(get_client_v1),
     telemetry: Telemetry = Depends(get_telemetry),
 ) -> ReponseAnalyseV1:
+    etiqueter_version(client.bundle)
     try:
         return analyser_v1(requete.texte, client, telemetry)
     except ErreurLLM as exc:

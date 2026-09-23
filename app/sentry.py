@@ -20,6 +20,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
 
 from app.config import SentrySettings
+from app.llm_client import Bundle
 
 ATTRIBUTS_EN_TAGS = ("mardik.version", "mardik.model_version")
 _providers_branches: set[int] = set()
@@ -38,6 +39,16 @@ def filtrer_evenement(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
             if cle in attributs:
                 tags[cle] = attributs[cle]
     return event
+
+
+def etiqueter_version(bundle: Bundle) -> None:
+    """Tags de version sur le scope de la requête : ils suivent aussi l'erreur,
+    capturée après la fermeture du span. À appeler depuis une route HTTP
+    seulement — hors requête, le scope est celui du processus."""
+    sentry_sdk.set_tags({
+        "mardik.version": bundle.version,
+        "mardik.model_version": f"{bundle.version}-{bundle.empreinte()}",
+    })
 
 
 def init_sentry(settings: SentrySettings, provider: TracerProvider | None) -> bool:

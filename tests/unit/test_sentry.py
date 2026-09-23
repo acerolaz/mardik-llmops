@@ -83,7 +83,8 @@ def _envois_apres_503(monkeypatch, analyser) -> str:
     return json.dumps(_evenements_apres_503(monkeypatch, analyser), ensure_ascii=False)
 
 
-def _evenements_apres_503(monkeypatch, analyser) -> list[dict]:
+def _evenements_apres_503(monkeypatch, analyser=None, *, chemin="/v2/analyse",
+                          configurer=None) -> list[dict]:
     from fastapi.testclient import TestClient
 
     from app import api_v2
@@ -98,10 +99,14 @@ def _evenements_apres_503(monkeypatch, analyser) -> list[dict]:
 
     monkeypatch.setattr(sentry_sdk, "init", init_capture)
     monkeypatch.setenv("SENTRY_DSN", DSN_FACTICE)
-    monkeypatch.setattr(api_v2, "analyser_v2", analyser)
-    client = TestClient(create_app(), raise_server_exceptions=False)
+    if analyser is not None:
+        monkeypatch.setattr(api_v2, "analyser_v2", analyser)
+    app = create_app()
+    if configurer is not None:
+        configurer(app)
+    client = TestClient(app, raise_server_exceptions=False)
 
-    r = client.post("/v2/analyse", json={"texte": f"Article 1 — {SECRET}. " * 5})
+    r = client.post(chemin, json={"texte": f"Article 1 — {SECRET}. " * 5})
     sentry_sdk.flush()
 
     assert r.status_code == 503
@@ -163,3 +168,51 @@ def test_erreur_etiquetee_avec_la_version(monkeypatch):
     (erreur,) = [e for e in evenements if e.get("exception")]
     assert erreur["tags"]["mardik.version"] == ClientEnPanne.bundle.version
     assert erreur["tags"]["mardik.model_version"].startswith(ClientEnPanne.bundle.version)
+
+
+class _ClientEnPanne:
+    def __init__(self, bundle):
+        self.bundle = bundle
+
+    def completer(self, *args, **kwargs):
+        from app.llm_client import ErreurLLM
+
+        raise ErreurLLM("fournisseur indisponible")
+
+
+def test_erreur_de_la_gateway_etiquetee_avec_la_version_servie(monkeypatch, registry):
+    from app import gateway
+
+    def configurer(app):
+        app.dependency_overrides[gateway.get_registry] = lambda: registry
+        app.dependency_overrides[gateway.get_fabrique_client] = lambda: _ClientEnPanne
+
+    evenements = _evenements_apres_503(monkeypatch, chemin="/analyse", configurer=configurer)
+
+    (erreur,) = [e for e in evenements if e.get("exception")]
+    assert erreur["tags"]["mardik.version"] == "v1.0.0"      # active du registre de test
+
+
+def test_analyse_hors_requete_ne_laisse_pas_de_tags(monkeypatch, telemetry):
+    """Script ou gate d'éval avec un DSN actif : pas de version périmée sur les événements suivants."""
+    from app import api_v2
+    from app.llm_client import Bundle, ErreurLLM
+
+    transports: list[TransportCapture] = []
+    init_reel = sentry_sdk.init
+
+    def init_capture(**options):
+        transports.append(TransportCapture(options))
+        return init_reel(transport=transports[-1], **options)
+
+    monkeypatch.setattr(sentry_sdk, "init", init_capture)
+    with sentry_sdk.isolation_scope() as scope:
+        scope.clear()                       # le fork copie les tags posés par d'autres tests
+        assert init_sentry(SentrySettings(dsn=DSN_FACTICE), None) is True
+        with pytest.raises(ErreurLLM):
+            api_v2.analyser_v2(f"Article 1 — {SECRET}. " * 5, _ClientEnPanne(Bundle.charger("v2")), telemetry)
+        sentry_sdk.capture_message("événement suivant, sans rapport")
+        sentry_sdk.flush()
+
+    (message,) = [e for e in transports[-1].recus if e.get("message") or e.get("logentry")]
+    assert not any(cle.startswith("mardik.") for cle in message.get("tags", {}))

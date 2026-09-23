@@ -27,7 +27,6 @@ import time
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import Any
 
-import sentry_sdk
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from opentelemetry import context as otel_context
 from pydantic import BaseModel, Field
@@ -35,6 +34,7 @@ from pydantic import BaseModel, Field
 from app.capture import Capture, capturer, get_capture
 from app.llm_client import Bundle, ErreurLLM, LLMClient, ReponseLLM
 from app.pipeline import Clause, DocumentTropLong, Section, consolider, decouper, extraire, scorer
+from app.sentry import etiqueter_version
 from app.telemetry import Mesure, Telemetry, build_default_telemetry
 
 router = APIRouter(prefix="/v2", tags=["v2"])
@@ -87,8 +87,6 @@ def analyser_v2(texte: str, client: LLMClient, telemetry: Telemetry) -> ReponseA
     with telemetry.tracer.start_as_current_span("analyse.requete") as span:
         span.set_attribute("mardik.version", bundle.version)
         span.set_attribute("mardik.model_version", model_version)
-        # Scope de la requête : l'erreur est capturée après la fermeture du span.
-        sentry_sdk.set_tags({"mardik.version": bundle.version, "mardik.model_version": model_version})
         termine = False
         echec_enregistre = False
         try:
@@ -284,6 +282,7 @@ def analyse(
     telemetry: Telemetry = Depends(get_telemetry),
     capture: Capture = Depends(get_capture),
 ) -> ReponseAnalyseV2:
+    etiqueter_version(client.bundle)
     try:
         reponse = analyser_v2(requete.texte, client, telemetry)
     except ErreurLLM as exc:
