@@ -139,7 +139,7 @@ function tableauClauses(versions, etat) {
       if (!types.has(cleType(libelle))) types.set(cleType(libelle), libelle);
     }
   }
-  if (!types.size && versions.every((v) => etat[v])) {
+  if (!types.size && versions.every((v) => etat[v]) && versions.some((v) => etat[v].ok)) {
     return '<section class="carte"><h2>Clauses clés</h2><p class="vide">Aucune clause détectée.</p></section>';
   }
   const tries = [...types.entries()].sort((a, b) => a[1].localeCompare(b[1], "fr"));
@@ -169,7 +169,11 @@ function alertes(versions, etat, longueur) {
   const items = [];
   for (const v of versions) {
     const r = etat[v];
-    if (!r?.ok) continue;
+    if (!r) continue;
+    if (!r.ok) {
+      items.push(`${v} · analyse échouée (${r.detail}) : aucun résultat à valider pour cette version`);
+      continue;
+    }
     if (v === "v1" && r.corps.tronque) {
       items.push(`v1 · contrat tronqué : ${nombre(longueur - LIMITE_V1)} caractères non lus — préférez la v2`);
     }

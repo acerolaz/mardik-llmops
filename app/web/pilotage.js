@@ -32,6 +32,10 @@ let dernier = null;
 // --- Verdict ----------------------------------------------------------------
 function rendreVerdict(r) {
   const d = r.decision;
+  if (!d && r.palier) {
+    return `<p class="verdict-titre statut warn">${icone("warn")}Verdict indisponible</p>
+      <p>Un canary est en cours (${esc(r.palier.version)} à ${esc(r.palier.pourcentage)} %), mais le verdict ne peut pas être calculé : voir les alertes.</p>${rendreTrafic(r.par_version)}`;
+  }
   if (!d) {
     return `<p class="verdict-titre statut neutre">${icone("ok")}Aucun canary en cours</p>
       <p>La version active reçoit tout le trafic : rien à décider.</p>${rendreTrafic(r.par_version)}`;
