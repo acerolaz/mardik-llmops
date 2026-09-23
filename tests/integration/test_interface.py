@@ -119,3 +119,10 @@ def test_page_pilotage_lecture_seule(client):
     for zone in ('id="verdict"', 'id="comparaison"', 'id="retroactions"', 'id="seuils"', 'id="journal"'):
         assert zone in page
     assert "<form" not in page             # aucune action possible depuis la page
+
+
+def test_page_observabilite_zones(client):
+    page = client.get("/observabilite").text
+
+    for zone in ('id="etat-sentry"', 'id="routes"', 'id="erreurs"', 'id="liens"'):
+        assert zone in page

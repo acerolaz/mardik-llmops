@@ -185,6 +185,11 @@ table { border-collapse: collapse; width: 100%; min-width: 560px; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted-fg); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
 
+/* Page Observabilité */
+#etat-sentry p { margin: 0; white-space: normal; }
+.liens-sentry { display: flex; flex-wrap: wrap; gap: 12px; }
+.liens-sentry .bouton { text-decoration: none; }
+
 @media (max-width: 767px) {
   .entete { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
   .entete #theme { margin-left: auto; }

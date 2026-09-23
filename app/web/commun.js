@@ -85,13 +85,13 @@ export function initTheme(bouton) {
   peindre();
 }
 
-export function surveillerResume({ onData, onErreur, boutonPause, horodatage }) {
+export function surveillerResume({ url = "/pilotage/resume", onData, onErreur, boutonPause, horodatage }) {
   let minuterie = null;
   let enPause = false;
   let derniere = null;
   async function tour() {
     try {
-      const r = await fetch("/pilotage/resume", { headers: { Accept: "application/json" } });
+      const r = await fetch(url, { headers: { Accept: "application/json" } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       onData(await r.json());
       derniere = Date.now();
