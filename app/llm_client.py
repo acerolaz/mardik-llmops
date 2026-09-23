@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -217,6 +218,26 @@ class LLMClient:
         return round(reponse.tokens / 1000 * self.bundle.cout_par_1k_tokens, 6)
 
     # --------------------------------------------------------------- providers
+    def _poster(self, http: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
+        """POST avec réessai sur HTTP 429 (quota fournisseur dépassé).
+
+        Attend ``Retry-After`` si le fournisseur l'envoie (plafonné), sinon
+        2, 4, 8 s + aléa. Les 5xx ne sont pas réessayés : le proxy de dérive en
+        injecte pour déclencher le rollback, il ne faut pas les masquer.
+        """
+        reessais = int(_env("LLM_RETRY_429_MAX", "3"))
+        plafond = float(_env("LLM_RETRY_429_ATTENTE_MAX_S", "30"))
+        for essai in range(reessais + 1):
+            r = http.post(url, **kwargs)
+            if r.status_code != 429 or essai == reessais:
+                return r
+            try:
+                attente = float(r.headers["retry-after"])
+            except (KeyError, ValueError):
+                attente = 2 ** (essai + 1) + random.uniform(0, 1)
+            time.sleep(min(attente, plafond))
+        return r
+
     def _appeler(
         self, prompt_systeme: str, prompt_utilisateur: str, json_mode: bool
     ) -> tuple[str, dict[str, Any]]:
@@ -238,7 +259,8 @@ class LLMClient:
                         body["seed"] = params["seed"]
                     if json_mode:
                         body["response_format"] = {"type": "json_object"}
-                    r = http.post(
+                    r = self._poster(
+                        http,
                         f"{self.proxy_url}/chat/completions",
                         json=body,
                         headers={
@@ -265,7 +287,8 @@ class LLMClient:
                 }
                 if json_mode:
                     body["format"] = "json"
-                r = http.post(
+                r = self._poster(
+                    http,
                     f"{self.proxy_url}/api/chat",
                     json=body,
                     headers={"x-mardik-provider": "ollama"},

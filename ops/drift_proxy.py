@@ -130,11 +130,14 @@ async def relayer(chemin: str, request: Request) -> Response:
         await asyncio.sleep(min(duree * 3, 30))
     if mode == "score" and r.status_code == 200:
         contenu = degrader_scores(contenu)
+    entetes_retour = {"x-mardik-drift": mode}
+    if "retry-after" in r.headers:  # délai demandé sur un 429, lu par app/llm_client.py
+        entetes_retour["retry-after"] = r.headers["retry-after"]
     return Response(
         content=contenu,
         status_code=r.status_code,
         media_type=r.headers.get("content-type", "application/json"),
-        headers={"x-mardik-drift": mode},
+        headers=entetes_retour,
     )
 
 
