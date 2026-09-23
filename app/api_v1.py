@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -60,6 +61,7 @@ def analyser_v1(texte: str, client: LLMClient, telemetry: Telemetry) -> ReponseA
     debut = time.perf_counter()
     with telemetry.tracer.start_as_current_span("analyse.requete") as span:
         span.set_attribute("mardik.version", bundle.version)
+        sentry_sdk.set_tag("mardik.version", bundle.version)   # scope de la requête : suit aussi les erreurs
         span.set_attribute("mardik.tronque", tronque)
         try:
             with telemetry.tracer.start_as_current_span("llm.appel") as span_llm:

@@ -80,6 +80,10 @@ def _envois_apres_503(monkeypatch, analyser) -> str:
     """Vraie app, vraie intégration FastAPI, 503 sur /v2/analyse : tout ce qui part vers Sentry."""
     import json
 
+    return json.dumps(_evenements_apres_503(monkeypatch, analyser), ensure_ascii=False)
+
+
+def _evenements_apres_503(monkeypatch, analyser) -> list[dict]:
     from fastapi.testclient import TestClient
 
     from app import api_v2
@@ -102,7 +106,7 @@ def _envois_apres_503(monkeypatch, analyser) -> str:
 
     assert r.status_code == 503
     assert transports and transports[-1].recus, "aucun événement capturé : le test ne prouve rien"
-    return json.dumps(transports[-1].recus, ensure_ascii=False)
+    return transports[-1].recus
 
 
 def test_exception_reelle_sans_texte_du_contrat_dans_les_variables_locales(monkeypatch):
@@ -122,3 +126,40 @@ def test_reponse_llm_non_json_sans_extrait_du_contrat(monkeypatch):
         extraire_json(texte)   # le LLM a « répondu » en recopiant le contrat, sans JSON
 
     assert SECRET not in _envois_apres_503(monkeypatch, analyser_reponse_illisible)
+
+
+def test_logs_stdlib_sans_texte_du_contrat(monkeypatch):
+    """Une bibliothèque tierce qui journalise le texte (breadcrumb, ou événement si ERROR)."""
+    import logging
+
+    from app.llm_client import ErreurLLM
+
+    def analyser_bavard(texte, client, telemetry):
+        logging.getLogger("tiers").warning("reçu : %s", texte)
+        logging.getLogger("tiers").error("échec sur : %s", texte)
+        raise ErreurLLM("fournisseur indisponible")
+
+    assert SECRET not in _envois_apres_503(monkeypatch, analyser_bavard)
+
+
+def test_erreur_etiquetee_avec_la_version(monkeypatch):
+    """Les issues se filtrent par version comme les traces : le tag est sur l'erreur aussi."""
+    from app import api_v2
+    from app.llm_client import Bundle, ErreurLLM
+
+    class ClientEnPanne:
+        bundle = Bundle.charger("v2")
+
+        def completer(self, *args, **kwargs):
+            raise ErreurLLM("fournisseur indisponible")
+
+    analyser_reel = api_v2.analyser_v2
+
+    def analyser_en_panne(texte, client, telemetry):
+        return analyser_reel(texte, ClientEnPanne(), telemetry)
+
+    evenements = _evenements_apres_503(monkeypatch, analyser_en_panne)
+
+    (erreur,) = [e for e in evenements if e.get("exception")]
+    assert erreur["tags"]["mardik.version"] == ClientEnPanne.bundle.version
+    assert erreur["tags"]["mardik.model_version"].startswith(ClientEnPanne.bundle.version)

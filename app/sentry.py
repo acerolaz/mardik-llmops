@@ -6,7 +6,9 @@ des transactions Sentry via ``SentrySpanProcessor`` (``instrumenter="otel"``) ;
 aucune instrumentation n'est réécrite.
 
 Confidentialité : le texte d'un contrat ne quitte jamais le serveur
-(``send_default_pii=False`` et ``filtrer_evenement``).
+(``send_default_pii=False``, ni variables locales, ni corps de requête, ni logs
+``logging``, et ``filtrer_evenement``). Règle du projet : un message d'exception
+ne cite jamais le texte du contrat ni la réponse du LLM — il part tel quel.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from typing import Any
 
 import sentry_sdk
 from opentelemetry.sdk.trace import TracerProvider
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
 
 from app.config import SentrySettings
@@ -49,6 +52,9 @@ def init_sentry(settings: SentrySettings, provider: TracerProvider | None) -> bo
         send_default_pii=False,
         include_local_variables=False,   # les frames portent `texte` (le contrat)
         max_request_body_size="never",
+        # Les logs passent par structlog (console) ; ceux de `logging` (bibliothèques
+        # tierces) pourraient citer le contrat : ni breadcrumbs ni événements.
+        integrations=[LoggingIntegration(level=None, event_level=None)],
         before_send=filtrer_evenement,
         before_send_transaction=filtrer_evenement,
     )
