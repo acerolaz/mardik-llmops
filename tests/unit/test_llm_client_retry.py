@@ -42,7 +42,7 @@ def test_429_puis_succes_reessaie_une_fois(monkeypatch, attentes):
 
 
 def test_429_persistant_leve_erreur_apres_trois_reessais(monkeypatch, attentes):
-    client = _client(monkeypatch, [httpx.Response(429)] * 4)
+    client = _client(monkeypatch, [httpx.Response(429) for _ in range(4)])
 
     with pytest.raises(ErreurLLM, match="HTTP 429"):
         client._appeler("système", "contrat", json_mode=True)
