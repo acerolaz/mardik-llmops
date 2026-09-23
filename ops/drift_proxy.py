@@ -18,7 +18,7 @@ Le mode se change à chaud, sans redémarrage :
 C'est ce que pilote ``scripts/traffic_sim.py --mode derive-score``.
 
 Routage amont : l'en-tête ``x-mardik-provider`` (posé par ``app/llm_client.py``)
-choisit l'amont — ``azure`` → ``AZURE_AI_INFERENCE_ENDPOINT`` (+ ``api-version``),
+choisit l'amont — ``azure`` → ``AZURE_AI_INFERENCE_ENDPOINT``,
 ``ollama`` → ``OLLAMA_URL`` (défaut http://localhost:11434).
 
     python -m ops.drift_proxy            # écoute sur LLM_PROXY_PORT (8080)
