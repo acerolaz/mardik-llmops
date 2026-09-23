@@ -71,7 +71,7 @@ def test_resume_registre_illisible(client, registry):
 
 @pytest.mark.parametrize("chemin, marqueur", [
     ("/", 'id="form-analyse"'),
-    ("/pilotage", 'id="versions"'),
+    ("/pilotage", 'id="verdict"'),
     ("/observabilite", 'id="observabilite"'),
 ])
 def test_pages_servies(client, chemin, marqueur):
@@ -111,3 +111,11 @@ def test_page_analyse_modes_et_sans_kpi(client):
     assert 'value="gateway"' not in page      # la gateway n'est plus proposée ici
     assert 'id="kpi-p95"' not in page and 'id="kpi-canary"' not in page
     assert 'id="suivi"' in page                # zone des timers
+
+
+def test_page_pilotage_lecture_seule(client):
+    page = client.get("/pilotage").text
+
+    for zone in ('id="verdict"', 'id="comparaison"', 'id="retroactions"', 'id="seuils"', 'id="journal"'):
+        assert zone in page
+    assert "<form" not in page             # aucune action possible depuis la page
