@@ -225,12 +225,13 @@ class LLMClient:
         2, 4, 8 s + aléa. Les 5xx ne sont pas réessayés : le proxy de dérive en
         injecte pour déclencher le rollback, il ne faut pas les masquer.
         """
-        reessais = int(_env("LLM_RETRY_429_MAX", "3"))
-        plafond = float(_env("LLM_RETRY_429_ATTENTE_MAX_S", "30"))
+        reessais = max(0, int(_env("LLM_RETRY_429_MAX", "3")))
+        plafond = max(0.0, float(_env("LLM_RETRY_429_ATTENTE_MAX_S", "30")))
         for essai in range(reessais + 1):
             r = http.post(url, **kwargs)
             if r.status_code != 429 or essai == reessais:
                 return r
+            r.close()
             try:
                 attente = float(r.headers["retry-after"])
             except (KeyError, ValueError):
