@@ -105,7 +105,14 @@ async def relayer(chemin: str, request: Request) -> Response:
             media_type="application/json",
         )
     provider = request.headers.get("x-mardik-provider", os.environ.get("LLM_PROVIDER", "ollama"))
-    url, extra = _amont(provider, chemin)
+    try:
+        url, extra = _amont(provider, chemin)
+    except ValueError as exc:
+        return Response(
+            content=json.dumps({"error": f"configuration Azure manquante : {exc}"}),
+            status_code=502,
+            media_type="application/json",
+        )
     entetes = {
         k: v
         for k, v in request.headers.items()
