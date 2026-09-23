@@ -18,7 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import api_v1, api_v2, gateway, pilotage
+from app import api_v1, api_v2, gateway, observabilite, pilotage
 from app.config import SentrySettings
 from app.pipeline import DocumentTropLong
 from app.routage import ErreurRoutage
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(api_v2.router)
     app.include_router(gateway.router)
     app.include_router(pilotage.router)
+    app.include_router(observabilite.router)
     app.mount("/static", StaticFiles(directory=WEB), name="static")
     app.mount("/exemples", StaticFiles(directory=EXEMPLES), name="exemples")
 
