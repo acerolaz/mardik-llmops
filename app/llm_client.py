@@ -242,8 +242,8 @@ class LLMClient:
                         f"{self.proxy_url}/chat/completions",
                         json=body,
                         headers={
-                            "api-key": _env("AZURE_AI_API_KEY"),
-                            "Authorization": f"Bearer {_env('AZURE_AI_API_KEY')}",
+                            "api-key": _env("AZURE_AI_INFERENCE_API_KEY"),
+                            "Authorization": f"Bearer {_env('AZURE_AI_INFERENCE_API_KEY')}",
                             "x-mardik-provider": "azure",
                         },
                     )
