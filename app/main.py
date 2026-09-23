@@ -47,6 +47,10 @@ def create_app() -> FastAPI:
     def page_pilotage() -> FileResponse:
         return FileResponse(WEB / "pilotage.html")
 
+    @app.get("/observabilite", include_in_schema=False)
+    def page_observabilite() -> FileResponse:
+        return FileResponse(WEB / "observabilite.html")
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {

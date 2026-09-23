@@ -69,6 +69,7 @@ def test_resume_registre_illisible(client, registry):
 @pytest.mark.parametrize("chemin, marqueur", [
     ("/", 'id="form-analyse"'),
     ("/pilotage", 'id="versions"'),
+    ("/observabilite", 'id="observabilite"'),
 ])
 def test_pages_servies(client, chemin, marqueur):
     r = client.get(chemin)
@@ -79,7 +80,18 @@ def test_pages_servies(client, chemin, marqueur):
     assert "/static/styles.css" in r.text
 
 
-@pytest.mark.parametrize("chemin", ["/static/styles.css", "/exemples/c02.txt", "/exemples/c07.txt"])
+@pytest.mark.parametrize("chemin", ["/", "/pilotage", "/observabilite"])
+def test_navigation_trois_onglets(client, chemin):
+    page = client.get(chemin).text
+
+    for cible in ('href="/"', 'href="/pilotage"', 'href="/observabilite"'):
+        assert cible in page
+    assert page.count('aria-current="page"') == 1
+    assert f'href="{chemin}" aria-current="page"' in page
+
+
+@pytest.mark.parametrize("chemin", ["/static/styles.css", "/static/observabilite.js",
+                                    "/exemples/c02.txt", "/exemples/c07.txt"])
 def test_fichiers_statiques(client, chemin):
     assert client.get(chemin).status_code == 200
 
