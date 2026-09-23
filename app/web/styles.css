@@ -76,7 +76,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; display: grid
   background: var(--card); border: 1px solid var(--border); border-radius: var(--rayon);
   padding: 20px; box-shadow: var(--ombre); min-width: 0;
 }
-.grille-kpi { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); }
 .barre-maj { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; color: var(--muted-fg); font-size: .9rem; }
 .chiffre, .bullet-valeur, .stats dd { font-variant-numeric: tabular-nums; }
 .chiffre-grand { font: 700 2.2rem var(--police-titre); font-variant-numeric: tabular-nums; color: var(--primary); }
@@ -142,27 +141,30 @@ textarea {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
 .titre-page { margin: 0 auto 0 0; color: var(--fg); }
-.barre-maj-kpi { margin-top: 12px; }
 .modes label { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border-radius: 6px; cursor: pointer; }
 .modes label:has(input:checked) { background: var(--muted); color: var(--primary); font-weight: 700; }
 
-/* Résultats */
-.resultats { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.resultats.une-colonne { grid-template-columns: minmax(0, 1fr); }
-.resultats:empty { display: none; }
-.colonne h3 { color: var(--primary); }
-.colonne.v1 h3 { color: var(--v1); }
-.clauses-v1 { padding-left: 1.2rem; margin: 0; }
-.fiabilite { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 12px; }
-.clause { border-top: 1px solid var(--border); padding: 10px 0; }
-.clause summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; cursor: pointer; min-height: 32px; }
-.clause-type { font-weight: 700; margin-right: auto; }
-.clause-sections { color: var(--muted-fg); font-size: .875rem; }
-.clause blockquote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--primary); background: var(--muted); font-size: .9rem; white-space: pre-wrap; }
 .warnings { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
 .warnings li { display: flex; gap: 6px; color: var(--warn); font-size: .9rem; }
 .erreur { display: flex; gap: 10px; color: var(--danger); }
 .erreur p { margin: 4px 0 0; color: var(--fg); }
+
+/* Page Analyse */
+.timers { display: flex; flex-wrap: wrap; gap: 12px; }
+.timers[hidden] { display: none; }
+.timer {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0;
+  padding: 8px 14px; min-height: 44px; border: 1px solid var(--border); border-radius: 999px; background: var(--card);
+}
+.timer-nom { font-weight: 700; color: var(--muted-fg); }
+.timer-duree { font: 700 1.1rem var(--police-texte); font-variant-numeric: tabular-nums; min-width: 5ch; text-align: right; }
+.resultats-analyse { display: grid; gap: 16px; }
+.resultats-analyse:empty { display: none; }
+.extrait { display: block; margin-top: 4px; font-size: .875rem; color: var(--muted-fg); white-space: pre-wrap; }
+tbody th { color: var(--fg); font-size: 1rem; text-transform: none; letter-spacing: 0; }
+.json-brut { border: 1px solid var(--border); border-radius: var(--rayon); background: var(--card); padding: 0 16px; }
+.json-brut summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 700; }
+.json-brut pre { margin: 0 0 16px; padding: 12px; background: var(--muted); border-radius: 8px; overflow-x: auto; font-size: .8rem; }
 
 /* Squelette de chargement et apparition */
 .squelette { display: grid; gap: 10px; }
@@ -196,8 +198,9 @@ th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--bor
 th { color: var(--muted-fg); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
 
 @media (max-width: 767px) {
-  .resultats { grid-template-columns: minmax(0, 1fr); }
-  .entete { gap: 8px; padding: 8px 12px; }
+  .entete { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
+  .entete #theme { margin-left: auto; }
+  .nav { order: 1; flex-basis: 100%; margin-right: 0; }
   .nav a { padding: 10px 8px; }
   .bullet { grid-template-columns: 4.5rem minmax(0, 1fr) 4.5rem; row-gap: 2px; }
   .bullet .statut { grid-column: 2 / -1; }

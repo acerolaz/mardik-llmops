@@ -98,3 +98,13 @@ def test_fichiers_statiques(client, chemin):
 
 def test_exemples_hors_dossier_refuses(client):
     assert client.get("/exemples/..%2f..%2fapp%2fmain.py").status_code == 404
+
+
+def test_page_analyse_modes_et_sans_kpi(client):
+    page = client.get("/").text
+
+    for mode in ('value="v1"', 'value="v2"', 'value="comparer"'):
+        assert mode in page
+    assert 'value="gateway"' not in page      # la gateway n'est plus proposée ici
+    assert 'id="kpi-p95"' not in page and 'id="kpi-canary"' not in page
+    assert 'id="suivi"' in page                # zone des timers

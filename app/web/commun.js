@@ -1,7 +1,6 @@
-// Partagé par les pages Analyse et Pilotage : échappement, formatage, icônes,
-// thème, rafraîchissement du résumé de pilotage et petits graphiques SVG.
+// Partagé par les pages Analyse, Pilotage et Observabilité : échappement, formatage, icônes,
+// thème, rafraîchissement d'un résumé, timer et petits graphiques SVG.
 
-export const SLO_P95_MS = 8000;        // docs/besoin_client.md : P95 < 8 s
 export const PALIERS = [10, 50, 100];  // ops/seuils_pilotage.yaml : paliers du canary
 const PERIODE_MS = 5000;
 
@@ -20,6 +19,24 @@ export const fmtDuree = (s) => {
   if (s < 60) return `${Math.round(s)} s`;
   return `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`;
 };
+
+const fmtSecondes = (ms) => `${nombre(1).format(ms / 1000)} s`;
+
+// Chronomètre d'un appel : affiche le temps écoulé tous les 100 ms dans `el`
+// (qui doit être aria-live="off" : on n'annonce pas chaque tick) ; la fonction
+// renvoyée l'arrête, fige la valeur finale et renvoie la durée en ms.
+export function demarrerTimer(el) {
+  const debut = performance.now();
+  const afficher = () => { el.textContent = fmtSecondes(performance.now() - debut); };
+  afficher();
+  const minuterie = setInterval(afficher, 100);
+  return () => {
+    clearInterval(minuterie);
+    const duree = performance.now() - debut;
+    el.textContent = fmtSecondes(duree);
+    return duree;
+  };
+}
 
 // Tracés Lucide (ISC), inline : ni CDN ni emoji.
 const TRACES = {
@@ -103,33 +120,6 @@ export function surveillerResume({ onData, onErreur, boutonPause, horodatage }) 
 }
 
 const AUCUN_TRAFIC = '<p class="vide">Aucun trafic dans la fenêtre.</p>';
-
-export function rendreP95(parVersion) {
-  const versions = Object.entries(parVersion);
-  if (!versions.length) return AUCUN_TRAFIC;
-  const echelle = Math.max(SLO_P95_MS * 1.25, ...versions.map(([, s]) => s.latence_p95_ms ?? 0));
-  const cible = ((SLO_P95_MS / echelle) * 100).toFixed(2);
-  const lignes = versions.map(([v, s]) => {
-    const p95 = s.latence_p95_ms;
-    const largeur = p95 == null ? 0 : ((p95 / echelle) * 100).toFixed(2);
-    const statut = p95 == null
-      ? '<span class="statut">—</span>'
-      : p95 <= SLO_P95_MS
-        ? `<span class="statut ok">${icone("ok")}dans le SLO</span>`
-        : `<span class="statut danger">${icone("danger")}hors SLO</span>`;
-    return `<div class="bullet">
-      <span class="chiffre">${esc(v)}</span>
-      <svg viewBox="0 0 100 12" preserveAspectRatio="none" role="img"
-           aria-label="P95 ${esc(v)} : ${fmtMs(p95)}, cible ${fmtMs(SLO_P95_MS)}">
-        <rect class="bullet-fond" x="0" y="2" width="100" height="8" rx="2"/>
-        <rect class="bullet-barre ${couleurVersion(v)}" x="0" y="3.5" width="${largeur}" height="5" rx="1.5"/>
-        <line class="bullet-cible" x1="${cible}" x2="${cible}" y1="0" y2="12" vector-effect="non-scaling-stroke"/>
-      </svg>
-      <span class="bullet-valeur">${fmtMs(p95)}</span>${statut}
-    </div>`;
-  });
-  return `${lignes.join("")}<p class="legende">Trait vertical : SLO ${fmtMs(SLO_P95_MS)} pour 95 % des analyses.</p>`;
-}
 
 export function rendreTrafic(parVersion) {
   const versions = Object.entries(parVersion);
