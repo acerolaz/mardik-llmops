@@ -84,8 +84,8 @@ jobs:
       MOCK: "off"
       LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
       LLM_MODEL: ${{ secrets.LLM_MODEL }}
-      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT }}
-      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY }}
+      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT || secrets.AZURE_AI_ENDPOINT }}
+      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY || secrets.AZURE_AI_API_KEY }}
       LLM_PROXY_URL: http://localhost:8080
     steps:
       - uses: actions/checkout@v4
