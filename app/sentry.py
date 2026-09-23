@@ -44,7 +44,10 @@ def filtrer_evenement(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
 def etiqueter_version(bundle: Bundle) -> None:
     """Tags de version sur le scope de la requête : ils suivent aussi l'erreur,
     capturée après la fermeture du span. À appeler depuis une route HTTP
-    seulement — hors requête, le scope est celui du processus."""
+    seulement — hors requête, le scope est celui du processus. Sans Sentry actif,
+    rien : le scope du processus reste vierge si Sentry est initialisé plus tard."""
+    if not sentry_sdk.get_client().dsn:   # is_active() est vrai même sans DSN
+        return
     sentry_sdk.set_tags({
         "mardik.version": bundle.version,
         "mardik.model_version": f"{bundle.version}-{bundle.empreinte()}",

@@ -24,8 +24,9 @@ class TransportCapture(Transport):
 
 
 @pytest.fixture(autouse=True)
-def sentry_inactif_apres():
+def sentry_inactif_apres(monkeypatch):
     yield
+    monkeypatch.delenv("SENTRY_DSN", raising=False)   # sinon init() relit le DSN factice du test
     sentry_sdk.init()          # client sans DSN : inactif pour les tests suivants
 
 
@@ -216,3 +217,41 @@ def test_analyse_hors_requete_ne_laisse_pas_de_tags(monkeypatch, telemetry):
 
     (message,) = [e for e in transports[-1].recus if e.get("message") or e.get("logentry")]
     assert not any(cle.startswith("mardik.") for cle in message.get("tags", {}))
+
+
+def test_sans_sentry_actif_aucun_tag_pose(monkeypatch):
+    """Sentry initialisé tard dans un processus qui a déjà servi des requêtes : pas de version périmée."""
+    from app.llm_client import Bundle
+    from app.sentry import etiqueter_version
+
+    transports: list[TransportCapture] = []
+    init_reel = sentry_sdk.init
+
+    def init_capture(**options):
+        transports.append(TransportCapture(options))
+        return init_reel(transport=transports[-1], **options)
+
+    monkeypatch.setattr(sentry_sdk, "init", init_capture)
+    with sentry_sdk.isolation_scope() as scope:
+        scope.clear()
+        assert not sentry_sdk.get_client().dsn          # Sentry pas encore configuré
+        etiqueter_version(Bundle.charger("v1"))          # une requête servie sans Sentry
+        assert init_sentry(SentrySettings(dsn=DSN_FACTICE), None) is True
+        sentry_sdk.capture_message("premier événement après l'initialisation")
+        sentry_sdk.flush()
+
+    (message,) = [e for e in transports[-1].recus if e.get("message") or e.get("logentry")]
+    assert not any(cle.startswith("mardik.") for cle in message.get("tags", {}))
+
+
+def test_erreur_de_la_route_v1_etiquetee_avec_la_version(monkeypatch):
+    from app import api_v1
+    from app.llm_client import Bundle
+
+    def configurer(app):
+        app.dependency_overrides[api_v1.get_client_v1] = lambda: _ClientEnPanne(Bundle.charger("v1"))
+
+    evenements = _evenements_apres_503(monkeypatch, chemin="/v1/analyse", configurer=configurer)
+
+    (erreur,) = [e for e in evenements if e.get("exception")]
+    assert erreur["tags"]["mardik.version"] == Bundle.charger("v1").version

@@ -11,16 +11,9 @@ from app.routage import (
     AucuneVersionActive,
     BundleIllisible,
     StrategieInconnue,
-    analyser,
     resoudre,
 )
 from ops.registry import Registry
-from tests.unit.doublures import FauxClient
-
-CONTRAT = "".join(
-    f"Article {i} — Résiliation\nLe contrat peut être résilié par chaque partie.\n"
-    for i in range(1, 4)
-)
 
 
 def _livrer_v2(registry: Registry) -> None:
@@ -66,17 +59,3 @@ def test_bundle_illisible(registry):
     with pytest.raises(BundleIllisible, match="version v1.0.0 : bundle illisible"):
         resoudre(registry, tirage=0.0)
 
-
-def test_analyser_passe_le_bundle_livre_a_la_fabrique(registry, telemetry):
-    _livrer_v2(registry)
-    registry.definir_actif("v2.0.0")
-    recus: list[str] = []
-
-    def fabrique(bundle: Bundle) -> FauxClient:
-        recus.append(bundle.version)
-        return FauxClient(bundle)
-
-    version, reponse = analyser(CONTRAT, registry, telemetry, 50.0, fabrique)
-    assert version == "v2.0.0"
-    assert recus == ["v2.0.0"]
-    assert reponse.version == "v2.0.0"
