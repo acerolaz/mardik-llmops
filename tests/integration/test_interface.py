@@ -37,6 +37,9 @@ def test_resume_avec_canary(client, registry, metriques):
     assert corps.palier is not None
     assert (corps.palier.version, corps.palier.pourcentage) == ("v2.0.0", 10)
     assert corps.journal[-1].evenement == "canary"
+    assert corps.decision is not None
+    assert (corps.decision.action, corps.decision.version) == ("attendre", "v2.0.0")
+    assert corps.seuils is not None and corps.seuils.promotion["paliers"] == [10, 50, 100]
     assert r.json()["journal"][-1]["pourcentage"] == 10     # champs en plus conservés
 
 

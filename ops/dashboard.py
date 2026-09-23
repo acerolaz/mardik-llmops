@@ -20,7 +20,11 @@ Contrat attendu :
                      "requetes": …, "duree_min_s": …, "requetes_min": …} | None,
           "alertes": […],
           "candidats": 3,
-          "journal": [ …5 derniers événements de déploiement… ]
+          "decision": {"action": "rollback|promouvoir|progresser|attendre",
+                       "version": …, "active": …, "motif": …,
+                       "pourcentage_suivant": …, "constats": […]} | None,
+          "seuils": {… ops/seuils_pilotage.yaml …} | None,
+          "journal": [ …20 derniers événements de déploiement… ]
         }
         Les versions sans trafic dans la fenêtre n'apparaissent pas.
         ``score_moyen`` vaut ``None`` pour une version qui ne produit pas de
@@ -43,7 +47,14 @@ from typing import Any
 
 from app.capture import candidats_en_attente
 from app.telemetry import Mesure, MetricsStore
-from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
+from ops.pilotage import (
+    Derive,
+    debut_palier,
+    detecter_derive,
+    evaluer_palier,
+    resume_metier,
+    version_surveillee,
+)
 from ops.registry import ErreurRegistre, Registry
 from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
 from ops.signaux import agreger, filtrer, histogramme, scores, serie_par_minute
@@ -108,6 +119,42 @@ def _palier(
     }
 
 
+def _decision(
+    index: dict[str, Any],
+    journal: list[dict[str, Any]],
+    metriques: MetricsStore,
+    seuils: SeuilsPilotage | None,
+    derive: Derive | None,
+    maintenant: float,
+) -> dict[str, Any] | None:
+    """Le verdict du pilote, avec ses propres fonctions et sur le même compte que
+    ``ops.deploy.tour`` : l'écran montre ce que le pilote décidera. Une dérive
+    critique du canary l'emporte sur le palier."""
+    canary = index.get("canary")
+    if canary is None or seuils is None:
+        return None
+    active = index.get("active")
+    if derive is not None and derive.version == canary and derive.critique:
+        return {"action": "rollback", "version": canary, "active": active, "motif": derive.motif,
+                "pourcentage_suivant": None, "constats": [c.to_dict() for c in derive.constats]}
+    debut = debut_palier(journal, canary)
+    if debut is None:
+        return None
+    depuis_s = maintenant - debut
+    mesures = metriques.lire(depuis_s=max(depuis_s, 0) + 1)
+    d = evaluer_palier(
+        canary,
+        filtrer(mesures, canary, depuis_ts=debut),
+        filtrer(mesures, active or "", depuis_ts=debut),
+        seuils,
+        depuis_s=depuis_s,
+        pourcentage=int(index.get("canary_percent") or 0),
+    )
+    return {"action": d.action, "version": canary, "active": active, "motif": d.motif,
+            "pourcentage_suivant": d.pourcentage_suivant,
+            "constats": [c.to_dict() for c in d.constats]}
+
+
 def resume(
     metriques: MetricsStore | None = None,
     *,
@@ -135,6 +182,7 @@ def resume(
     index, journal = _lu(lambda: (registry.index(), registry.journal()), ({}, []), alertes,
                          "registre illisible", (ErreurRegistre, *_ILLISIBLE))
 
+    derive: Derive | None = None
     surveillee = version_surveillee(index)
     if seuils is not None and surveillee is not None:
         debut = debut_palier(journal, surveillee) if index.get("canary") == surveillee else None
@@ -158,14 +206,18 @@ def resume(
                  "métriques illisibles")
     candidats_n = _lu(lambda: len(candidats_en_attente(candidats)), 0, alertes,
                       "candidats illisibles")
+    decision = _lu(lambda: _decision(index, journal, metriques, seuils, derive, maintenant), None,
+                   alertes, "métriques illisibles")
     return {
         "fenetre_s": fenetre,
         "total": len(mesures),
         "par_version": _par_version(mesures),
         "palier": palier,
+        "decision": decision,
+        "seuils": seuils.to_dict() if seuils else None,
         "alertes": alertes,
         "candidats": candidats_n,
-        "journal": journal[-5:],
+        "journal": journal[-20:],
     }
 
 
