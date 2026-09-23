@@ -71,3 +71,54 @@ def test_spans_otel_envoyes_comme_transaction(monkeypatch):
     assert transaction["environment"] == "test"
     assert transaction["tags"]["mardik.version"] == "v2"
     assert any("llm.appel" in (s.get("description"), s.get("op")) for s in transaction["spans"])
+
+
+SECRET = "CLAUSE_SECRETE_DU_CONTRAT"
+
+
+def _envois_apres_503(monkeypatch, analyser) -> str:
+    """Vraie app, vraie intégration FastAPI, 503 sur /v2/analyse : tout ce qui part vers Sentry."""
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from app import api_v2
+    from app.main import create_app
+
+    transports: list[TransportCapture] = []
+    init_reel = sentry_sdk.init
+
+    def init_capture(**options):
+        transports.append(TransportCapture(options))
+        return init_reel(transport=transports[-1], **options)
+
+    monkeypatch.setattr(sentry_sdk, "init", init_capture)
+    monkeypatch.setenv("SENTRY_DSN", DSN_FACTICE)
+    monkeypatch.setattr(api_v2, "analyser_v2", analyser)
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    r = client.post("/v2/analyse", json={"texte": f"Article 1 — {SECRET}. " * 5})
+    sentry_sdk.flush()
+
+    assert r.status_code == 503
+    assert transports and transports[-1].recus, "aucun événement capturé : le test ne prouve rien"
+    return json.dumps(transports[-1].recus, ensure_ascii=False)
+
+
+def test_exception_reelle_sans_texte_du_contrat_dans_les_variables_locales(monkeypatch):
+    from app.llm_client import ErreurLLM
+
+    def analyser_en_panne(texte, client, telemetry):
+        contrat = texte  # noqa: F841 — variable locale portant le texte
+        raise ErreurLLM("fournisseur indisponible")
+
+    assert SECRET not in _envois_apres_503(monkeypatch, analyser_en_panne)
+
+
+def test_reponse_llm_non_json_sans_extrait_du_contrat(monkeypatch):
+    from app.llm_client import extraire_json
+
+    def analyser_reponse_illisible(texte, client, telemetry):
+        extraire_json(texte)   # le LLM a « répondu » en recopiant le contrat, sans JSON
+
+    assert SECRET not in _envois_apres_503(monkeypatch, analyser_reponse_illisible)

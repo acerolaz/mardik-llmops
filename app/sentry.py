@@ -47,6 +47,8 @@ def init_sentry(settings: SentrySettings, provider: TracerProvider | None) -> bo
         traces_sample_rate=settings.traces_sample_rate,
         instrumenter="otel",
         send_default_pii=False,
+        include_local_variables=False,   # les frames portent `texte` (le contrat)
+        max_request_body_size="never",
         before_send=filtrer_evenement,
         before_send_transaction=filtrer_evenement,
     )
