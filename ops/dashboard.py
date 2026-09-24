@@ -97,7 +97,7 @@ def _lu(lire: Callable[[], Any], defaut: Any, alertes: list[str], alerte: str,
 
 def _palier(
     index: dict[str, Any],
-    journal: list[dict[str, Any]],
+    debut: float | None,
     lues: list[Mesure],
     seuils: SeuilsPilotage | None,
     maintenant: float,
@@ -107,7 +107,6 @@ def _palier(
     canary = index.get("canary")
     if canary is None:
         return None
-    debut = debut_palier(journal, canary)
     requetes = 0 if debut is None else len(filtrer(lues, canary, depuis_ts=debut))
     return {
         "version": canary,
@@ -121,7 +120,7 @@ def _palier(
 
 def _decision(
     index: dict[str, Any],
-    journal: list[dict[str, Any]],
+    debut: float | None,
     lues: list[Mesure],
     seuils: SeuilsPilotage | None,
     derive: Derive | None,
@@ -137,7 +136,6 @@ def _decision(
     if derive is not None and derive.version == canary and derive.critique:
         return {"action": "rollback", "version": canary, "active": active, "motif": derive.motif,
                 "pourcentage_suivant": None, "constats": [c.to_dict() for c in derive.constats]}
-    debut = debut_palier(journal, canary)
     if debut is None:
         return None
     depuis_s = maintenant - debut
@@ -196,7 +194,7 @@ def resume(
     derive: Derive | None = None
     surveillee = version_surveillee(index)
     if seuils is not None and surveillee is not None:
-        debut = debut_palier(journal, surveillee) if index.get("canary") == surveillee else None
+        debut = debut_canary if canary == surveillee else None
         derive = detecter_derive(
             surveillee, filtrer(mesures, surveillee, depuis_ts=debut), seuils.derive,
             minimum=seuils.minimum,
@@ -213,10 +211,10 @@ def resume(
                 valeur=c.valeur, seuil=c.seuil,
             ))
 
-    palier = _palier(index, journal, lues, seuils, maintenant) if lisibles else None
+    palier = _palier(index, debut_canary, lues, seuils, maintenant) if lisibles else None
     candidats_n = _lu(lambda: len(candidats_en_attente(candidats)), 0, alertes,
                       "candidats illisibles")
-    decision = _decision(index, journal, lues, seuils, derive, maintenant) if lisibles else None
+    decision = _decision(index, debut_canary, lues, seuils, derive, maintenant) if lisibles else None
     return {
         "fenetre_s": fenetre,
         "total": len(mesures),

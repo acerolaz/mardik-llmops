@@ -20,6 +20,12 @@ export const fmtDuree = (s) => {
   return `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`;
 };
 
+export const fmtNombre = (n, d = 0) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: d }).format(n);
+export const fmtDate = (iso) => {
+  const d = new Date(iso || NaN);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("fr-FR");
+};
+
 const fmtSecondes = (ms) => `${nombre(1).format(ms / 1000)} s`;
 
 // Chronomètre d'un appel : affiche le temps écoulé tous les 100 ms dans `el`

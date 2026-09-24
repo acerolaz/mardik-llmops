@@ -1,4 +1,4 @@
-import { arrondi2, demarrerTimer, esc, fmtScore, icone, initTheme, messageSansClause } from "/static/commun.js";
+import { arrondi2, demarrerTimer, esc, fmtNombre, fmtScore, icone, initTheme, messageSansClause } from "/static/commun.js";
 
 const LIMITE_V1 = 16000;      // models/v1/config.yaml : contexte_max_caracteres (au-delà, v1 coupe)
 const SEUIL_RELECTURE = 0.6;  // models/v2/config.yaml : seuil_relecture
@@ -11,15 +11,14 @@ const MODES = { v1: ["v1"], v2: ["v2"], comparer: ["v1", "v2"] };
 
 const $ = (s) => document.querySelector(s);
 const texte = $("#texte");
-const nombre = (n) => n.toLocaleString("fr-FR");
 
 // --- Saisie -----------------------------------------------------------------
 function majCompteur() {
   const n = texte.value.length;
   const alerte = n > LIMITE_V1
-    ? ` · <span class="warn">${icone("warn")}au-delà de ${nombre(LIMITE_V1)}, v1 tronque le contrat</span>`
+    ? ` · <span class="warn">${icone("warn")}au-delà de ${fmtNombre(LIMITE_V1)}, v1 tronque le contrat</span>`
     : "";
-  $("#compteur").innerHTML = `${nombre(n)} caractère${n > 1 ? "s" : ""}${alerte}`;
+  $("#compteur").innerHTML = `${fmtNombre(n)} caractère${n > 1 ? "s" : ""}${alerte}`;
 }
 texte.addEventListener("input", majCompteur);
 
@@ -103,7 +102,7 @@ function fiabiliteDocument(v, corps) {
 function lectureComplete(v, corps) {
   if (v === "v2") return `<span class="statut ok">${icone("ok")}oui (${esc(corps.sections)} section(s))</span>`;
   return corps.tronque
-    ? `<span class="statut warn">${icone("warn")}non, tronqué à ${nombre(LIMITE_V1)} caractères</span>`
+    ? `<span class="statut warn">${icone("warn")}non, tronqué à ${fmtNombre(LIMITE_V1)} caractères</span>`
     : `<span class="statut ok">${icone("ok")}oui</span>`;
 }
 
@@ -175,7 +174,7 @@ function alertes(versions, etat, longueur) {
       continue;
     }
     if (v === "v1" && r.corps.tronque) {
-      items.push(`v1 · contrat tronqué : ${nombre(longueur - LIMITE_V1)} caractères non lus — préférez la v2`);
+      items.push(`v1 · contrat tronqué : ${fmtNombre(longueur - LIMITE_V1)} caractères non lus — préférez la v2`);
     }
     if (v === "v2") items.push(...r.corps.warnings.map((w) => `v2 · ${w}`));
   }

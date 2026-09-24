@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { arrondi2, etatSansVerdict, fmtScore, messageSansClause } from "../../app/web/commun.js";
+import { arrondi2, etatSansVerdict, fmtDate, fmtNombre, fmtScore, messageSansClause } from "../../app/web/commun.js";
 
 // Mêmes valeurs que Python ``round(v, 2)`` (construire_warnings) et ``f"{v:.2f}"`` (_fr).
 const PYTHON = { 0.595: 0.59, 0.605: 0.6, 0.745: 0.74, 0.755: 0.76, 0.6: 0.6, 0.42: 0.42 };
@@ -48,4 +48,18 @@ test("etatSansVerdict : registre illisible → état inconnu", () => {
 test("etatSansVerdict : aucun canary seulement si le registre a été lu", () => {
   assert.equal(etatSansVerdict({ canary: null, alertes: [] }), "aucun");
   assert.equal(etatSansVerdict({ canary: null, alertes: ["seuils invalides : absent"] }), "aucun");
+});
+
+test("fmtDate : date locale fr-FR, « — » si absente ou illisible", () => {
+  const iso = "2026-09-23T14:08:35+00:00";
+  assert.equal(fmtDate(iso), new Date(iso).toLocaleString("fr-FR"));
+  assert.equal(fmtDate(null), "—");
+  assert.equal(fmtDate(""), "—");
+  assert.equal(fmtDate("pas une date"), "—");
+});
+
+test("fmtNombre : séparateur de milliers fr-FR, décimales au plus d", () => {
+  assert.equal(fmtNombre(62186), (62186).toLocaleString("fr-FR"));
+  assert.equal(fmtNombre(2.345, 1), "2,3");
+  assert.equal(fmtNombre(2, 1), "2");
 });

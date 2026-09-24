@@ -1,5 +1,5 @@
 import {
-  esc, etatSansVerdict, fmtDuree, fmtEur, fmtMs, fmtPct, fmtScore, icone, initTheme, peindre, rendrePalier,
+  esc, etatSansVerdict, fmtDate, fmtDuree, fmtEur, fmtMs, fmtPct, fmtScore, icone, initTheme, peindre, rendrePalier,
   rendreTrafic, surveillerResume,
 } from "/static/commun.js";
 
@@ -19,10 +19,10 @@ const VERDICTS = {
 };
 const pctErreur = (v) => fmtPct(v == null ? null : v * 100);
 const SIGNAUX = {
-  score_moyen: { libelle: "Score moyen", sens: "≥", fmt: fmtScore, delta: (d) => fmtScore(d) },
-  score_p10: { libelle: "Score p10", sens: "≥", fmt: fmtScore, delta: (d) => fmtScore(d) },
+  score_moyen: { libelle: "Score moyen", sens: "≥", fmt: fmtScore, delta: fmtScore },
+  score_p10: { libelle: "Score p10", sens: "≥", fmt: fmtScore, delta: fmtScore },
   taux_erreur: { libelle: "Taux d'erreur", sens: "≤", fmt: pctErreur, delta: (d) => `${fmtScore(d * 100)} pt` },
-  latence_p95_ms: { libelle: "Latence P95", sens: "≤", fmt: fmtMs, delta: (d) => fmtMs(d) },
+  latence_p95_ms: { libelle: "Latence P95", sens: "≤", fmt: fmtMs, delta: fmtMs },
 };
 const ORDRE = ["score_moyen", "score_p10", "taux_erreur", "latence_p95_ms"];
 
@@ -125,9 +125,7 @@ function rendreComparaison(r) {
 // --- Rétroactions et seuils -------------------------------------------------
 function derniere(journal, evenements) {
   const e = journal.slice().reverse().find((x) => evenements.includes(x.evenement));
-  if (!e?.date) return "aucune dans les 20 derniers événements";
-  const d = new Date(e.date);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("fr-FR");
+  return e?.date ? fmtDate(e.date) : "aucune dans les 20 derniers événements";
 }
 
 function rendreRetroactions(r) {
@@ -165,15 +163,10 @@ function rendreSeuils(s) {
 
 // --- Traçabilité ------------------------------------------------------------
 function ligneJournal(e) {
-  const date = (() => {
-    if (!e.date) return "—";
-    const d = new Date(e.date);
-    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("fr-FR");
-  })();
   const badge = BADGES[e.evenement] ?? "neutre";
   const origine = e.origine === "auto" ? "automatique" : e.origine ? "humaine" : "—";
   return `<tr>
-    <td class="chiffre">${esc(date)}</td>
+    <td class="chiffre">${esc(fmtDate(e.date))}</td>
     <td><span class="badge ${badge}">${esc(e.evenement ?? "—")}</span></td>
     <td><span class="badge neutre">${esc(origine)}</span></td>
     <td>${esc(e.resume ?? e.motif ?? "")}</td>

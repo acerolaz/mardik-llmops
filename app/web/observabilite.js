@@ -1,7 +1,6 @@
-import { esc, fmtDuree, fmtEur, fmtMs, fmtPct, icone, initTheme, peindre, surveillerResume } from "/static/commun.js";
+import { esc, fmtDate, fmtDuree, fmtEur, fmtMs, fmtNombre, fmtPct, icone, initTheme, peindre, surveillerResume } from "/static/commun.js";
 
 const $ = (s) => document.querySelector(s);
-const nombre = (n, d = 0) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: d }).format(n);
 const LIENS = [["traces", "Traces"], ["issues", "Erreurs (issues)"], ["performance", "Performance"]];
 
 function etatSentry(s) {
@@ -15,15 +14,13 @@ function ligneRoute(s) {
     <th scope="row"><code>${esc(s.route)}</code></th><td>${esc(s.version)}</td>
     <td class="chiffre">${esc(s.requetes)}</td><td class="chiffre">${fmtPct(s.taux_erreur * 100)}</td>
     <td class="chiffre">${fmtMs(s.latence_p50_ms)}</td><td class="chiffre">${fmtMs(s.latence_p95_ms)}</td>
-    <td class="chiffre">${nombre(s.appels_llm_moyen, 1)}</td><td class="chiffre">${nombre(s.tokens_moyen)}</td>
+    <td class="chiffre">${fmtNombre(s.appels_llm_moyen, 1)}</td><td class="chiffre">${fmtNombre(s.tokens_moyen)}</td>
     <td class="chiffre">${fmtPct(s.taux_tronque * 100)}</td><td class="chiffre">${fmtEur(s.cout_total_eur)}</td>
   </tr>`;
 }
 
 function ligneErreur(e) {
-  const d = new Date(e.date);
-  const date = Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("fr-FR");
-  return `<tr><td class="chiffre">${esc(date)}</td><td><code>${esc(e.route)}</code></td>
+  return `<tr><td class="chiffre">${esc(fmtDate(e.date))}</td><td><code>${esc(e.route)}</code></td>
     <td>${esc(e.version)}</td><td class="chiffre">${fmtMs(e.latence_ms)}</td></tr>`;
 }
 
