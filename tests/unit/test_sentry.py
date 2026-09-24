@@ -275,15 +275,22 @@ def test_processeur_sentry_ajoute_une_seule_fois_par_provider(monkeypatch):
     assert _processeurs_sentry(provider) == 1
 
 
-def test_nouveau_provider_branche_meme_si_son_id_a_deja_servi(monkeypatch):
-    """Un provider collecté libère son ``id`` : un nouveau provider peut le recevoir."""
+def test_provider_collecte_ne_bloque_pas_un_nouveau_provider(monkeypatch):
+    """Le suivi des providers est un WeakSet : un provider collecté disparaît, et un nouveau provider reste branchable."""
+    import gc
+    import weakref
     import app.sentry as module
 
     transport = TransportCapture()
     monkeypatch.setattr(sentry_sdk, "init", lambda **o: sentry_sdk.api.init(transport=transport, **o))
+
+    ancien = TracerProvider()
+    module._providers_branches.add(ancien)
+    ref = weakref.ref(ancien)
+    del ancien
+    gc.collect()
+    assert ref() is None and len(module._providers_branches) == 0
+
     provider = TracerProvider()
-    monkeypatch.setattr(module, "_providers_branches", {id(provider)})   # id laissé par un provider disparu
-
     init_sentry(SentrySettings(dsn=DSN_FACTICE), provider)
-
     assert _processeurs_sentry(provider) == 1
