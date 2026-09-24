@@ -22,7 +22,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.llm_client import TYPES_CLAUSES, Bundle, ErreurLLM, LLMClient
-from app.sentry import etiqueter_version
 from app.telemetry import Mesure, Telemetry, build_default_telemetry
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -123,7 +122,6 @@ def analyse(
     client: LLMClient = Depends(get_client_v1),
     telemetry: Telemetry = Depends(get_telemetry),
 ) -> ReponseAnalyseV1:
-    etiqueter_version(client.bundle)
     try:
         return analyser_v1(requete.texte, client, telemetry)
     except ErreurLLM as exc:

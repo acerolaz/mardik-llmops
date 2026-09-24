@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,7 +22,8 @@ from app import api_v1, api_v2, gateway, observabilite, pilotage
 from app.config import SentrySettings
 from app.pipeline import DocumentTropLong
 from app.routage import ErreurRoutage
-from app.sentry import init_sentry
+from app.llm_client import Bundle
+from app.sentry import etiqueter_version, init_sentry
 from app.telemetry import build_default_telemetry
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -30,12 +31,17 @@ WEB = RACINE / "app" / "web"
 EXEMPLES = RACINE / "eval" / "contrats"
 
 
+def _etiqueter_v1(bundle: Bundle = Depends(api_v1.get_bundle_v1)) -> None:
+    """Tag de version des requêtes /v1, branché ici : ``app/api_v1.py`` est intouchable."""
+    etiqueter_version(bundle)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Mardik — analyse de contrats", version="2.0.0")
     telemetry = build_default_telemetry()
     init_sentry(SentrySettings(), telemetry.provider)
 
-    app.include_router(api_v1.router)
+    app.include_router(api_v1.router, dependencies=[Depends(_etiqueter_v1)])
     app.include_router(api_v2.router)
     app.include_router(gateway.router)
     app.include_router(pilotage.router)
