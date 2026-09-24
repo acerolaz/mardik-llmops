@@ -43,7 +43,7 @@ etat:               ## répartition du trafic vue par la gateway (GET /gateway/e
 test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 	MOCK=on uv run pytest -q
 
-test-unit:          ## pipeline v2, gate, versions, routage, transitions, workflows, signaux, pilotage, seuils, anonymisation, sentry, api_v1 intouchable : verts
+test-unit:          ## pipeline v2, gate, versions, routage, transitions, workflows, signaux, pilotage, seuils, anonymisation, sentry, réessai 429, api_v1 intouchable : verts
 	MOCK=on uv run pytest -q tests/unit
 
 test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard, interface, observabilité : verts
