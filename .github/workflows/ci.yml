@@ -48,10 +48,15 @@ jobs:
         with:
           python-version: "3.11"
       - run: uv sync
-      - name: Tests unitaires (pipeline v2, gate, versions)
+      - name: Tests unitaires
         run: uv run pytest -q tests/unit
-      - name: Tests d'intégration (hérités de la remédiation + v2 + gate + publication)
+      - name: Tests d'intégration
         run: uv run pytest -q tests/integration
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Tests JS de l'interface
+        run: node --test "tests/web/*.test.mjs"
       - name: Tests d'acceptance (le brief)
         run: uv run pytest -q tests/acceptance
 

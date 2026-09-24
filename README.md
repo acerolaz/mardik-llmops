@@ -142,7 +142,7 @@ tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [§4-§7 FAIT — SP3, SP4],
               superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication, routage/déploiement,
               observabilité, interface client, refonte frontend)
-.github/      workflows/ci.yml — lint, tests, gates (MOCK + release), build, publication, canary (installation + 10 %) ;
+.github/      workflows/ci.yml — lint, tests (Python + JS), gates (MOCK + release), build, publication, canary (installation + 10 %) ;
               promotion.yml (50 %, 100 %) et rollback.yml — pilotage manuel
 ```
 

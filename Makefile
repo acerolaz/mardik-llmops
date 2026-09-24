@@ -28,14 +28,15 @@ dashboard:          ## tableau de bord brut en local (texte) — DASH=serve pour
 pilote:             ## boucle du pilote en local : surveillance, rollback auto, promotion canary
 	uv run python -m ops.deploy piloter
 
-calibrer:           ## propose des seuils depuis la production (VERSION=vX.Y.Z) ; n'écrit rien
+calibrer:           ## propose des seuils depuis la production (VERSION=vX.Y.Z obligatoire) ; n'écrit rien
+	@case "$(VERSION)" in v*.*.*) ;; *) echo "calibrer : VERSION=vX.Y.Z requis (version publiée, pas « $(VERSION) »)"; exit 2;; esac
 	uv run python -m ops.seuils calibrer --version $(VERSION)
 
 candidats:          ## cas v2 à faible confiance capturés, en attente de versement
 	uv run python -m eval.enrichir lister
 
 verser:             ## verse un candidat relu dans le jeu d'évaluation (ID=…, CLAUSES=type1,type2)
-	uv run python -m eval.enrichir verser $(ID) --clauses $(CLAUSES)
+	uv run python -m eval.enrichir verser "$(ID)" --clauses "$(CLAUSES)"
 
 etat:               ## répartition du trafic vue par la gateway (GET /gateway/etat, APP_URL)
 	@curl -sf $(APP_URL)/gateway/etat && echo
