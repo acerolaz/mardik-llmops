@@ -183,7 +183,10 @@ def resume(
     # s'il a commencé avant (palier et verdict se comptent sur le palier entier).
     canary = index.get("canary")
     debut_canary = debut_palier(journal, canary) if canary else None
-    portee = fenetre if debut_canary is None else max(fenetre, max(maintenant - debut_canary, 0) + 1)
+    if not fenetre or debut_canary is None:
+        portee = fenetre                       # 0 : toutes les mesures, comme MetricsStore.lire
+    else:
+        portee = max(fenetre, max(maintenant - debut_canary, 0) + 1)
     lues = _lu(lambda: metriques.lire(depuis_s=portee), None, alertes, "métriques illisibles")
     lisibles = lues is not None                # illisibles : ni palier ni verdict, plutôt qu'un faux 0
     lues = lues or []

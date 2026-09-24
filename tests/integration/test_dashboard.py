@@ -268,3 +268,16 @@ def test_canary_expose_meme_si_metriques_illisibles(metriques, registry, monkeyp
 
 def test_sans_canary_champ_canary_nul(metriques, registry, tmp_path):
     assert resume(metriques, registry=registry, candidats=tmp_path / "absent.jsonl")["canary"] is None
+
+
+def test_fenetre_zero_compte_tout_le_trafic(metriques, registry, tmp_path):
+    """``--fenetre 0`` : toutes les mesures, comme ``MetricsStore.lire(depuis_s=0)``."""
+    _mesures(metriques, "v1.0.0", 5, score=None, ts=time.time() - 3600)   # avant le palier
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 3, score=0.9)
+
+    r = resume(metriques, fenetre_s=0, registry=registry, candidats=tmp_path / "absent.jsonl",
+               maintenant=entree["ts"] + 10)
+
+    assert r["total"] == 8
+    assert r["par_version"]["v1.0.0"]["requetes"] == 5
