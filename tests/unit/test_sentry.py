@@ -39,17 +39,13 @@ def test_sans_dsn_rien_n_est_initialise(monkeypatch):
     assert not sentry_sdk.get_client().dsn
 
 
-def test_filtre_retire_le_texte_du_contrat_et_etiquette_la_version():
-    event = {
-        "request": {"url": "http://mardik/v2/analyse", "data": {"texte": "CONTRAT CONFIDENTIEL"}},
-        "contexts": {"otel": {"attributes": {"mardik.version": "v2", "mardik.model_version": "v2.0.3"}}},
-    }
+def test_filtre_retire_le_texte_du_contrat():
+    event = {"request": {"url": "http://mardik/v2/analyse", "data": {"texte": "CONTRAT CONFIDENTIEL"}}}
 
     sortie = filtrer_evenement(event, {})
 
     assert "data" not in sortie["request"]
     assert "CONTRAT CONFIDENTIEL" not in repr(sortie)
-    assert sortie["tags"] == {"mardik.version": "v2", "mardik.model_version": "v2.0.3"}
 
 
 def test_spans_otel_envoyes_comme_transaction(monkeypatch):
@@ -65,8 +61,7 @@ def test_spans_otel_envoyes_comme_transaction(monkeypatch):
 
     assert init_sentry(SentrySettings(dsn=DSN_FACTICE, environment="test"), provider) is True
     tracer = provider.get_tracer("test")
-    with tracer.start_as_current_span("analyse.requete") as span:
-        span.set_attribute("mardik.version", "v2")
+    with tracer.start_as_current_span("analyse.requete"):
         with tracer.start_as_current_span("llm.appel"):
             pass
     sentry_sdk.flush()
@@ -74,7 +69,6 @@ def test_spans_otel_envoyes_comme_transaction(monkeypatch):
     (transaction,) = [e for e in transports[0].recus if e.get("type") == "transaction"]
     assert transaction["transaction"] == "analyse.requete"
     assert transaction["environment"] == "test"
-    assert transaction["tags"]["mardik.version"] == "v2"
     assert any("llm.appel" in (s.get("description"), s.get("op")) for s in transaction["spans"])
 
 
@@ -299,3 +293,28 @@ def test_provider_collecte_ne_bloque_pas_un_nouveau_provider(monkeypatch):
     provider = TracerProvider()
     init_sentry(SentrySettings(dsn=DSN_FACTICE), provider)
     assert _processeurs_sentry(provider) == 1
+
+
+def test_transaction_d_une_requete_etiquetee_avec_la_version(monkeypatch):
+    """Les tags de version viennent de la route (etiqueter_version), pas des attributs du span."""
+    from fastapi.testclient import TestClient
+
+    from app.llm_client import Bundle
+    from app.main import create_app
+
+    transports: list[TransportCapture] = []
+    init_reel = sentry_sdk.init
+
+    def init_capture(**options):
+        transports.append(TransportCapture(options))
+        return init_reel(transport=transports[-1], **options)
+
+    monkeypatch.setattr(sentry_sdk, "init", init_capture)
+    monkeypatch.setenv("SENTRY_DSN", DSN_FACTICE)
+    client = TestClient(create_app())
+
+    assert client.post("/v2/analyse", json={"texte": "Article 1 — Résiliation. " * 5}).status_code == 200
+    sentry_sdk.flush()
+
+    (transaction,) = [e for e in transports[-1].recus if e.get("type") == "transaction"]
+    assert transaction["tags"]["mardik.version"] == Bundle.charger("v2").version

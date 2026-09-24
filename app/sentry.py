@@ -23,24 +23,17 @@ from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
 from app.config import SentrySettings
 from app.llm_client import Bundle
 
-ATTRIBUTS_EN_TAGS = ("mardik.version", "mardik.model_version")
 # Référence faible : un provider collecté sort de l'ensemble, et un nouveau provider
 # n'est jamais confondu avec un ancien (pas de réutilisation d'``id``).
 _providers_branches: WeakSet[TracerProvider] = WeakSet()
 
 
 def filtrer_evenement(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any]:
-    """Retire le corps des requêtes (le texte du contrat) et recopie la version
-    portée par le span en tag, pour filtrer les traces par version dans Sentry."""
+    """Retire le corps des requêtes : le texte du contrat. Les tags de version
+    viennent des routes (``etiqueter_version``)."""
     requete = event.get("request")
     if isinstance(requete, dict):
         requete.pop("data", None)
-    attributs = ((event.get("contexts") or {}).get("otel") or {}).get("attributes") or {}
-    tags = event.setdefault("tags", {})
-    if isinstance(tags, dict):
-        for cle in ATTRIBUTS_EN_TAGS:
-            if cle in attributs:
-                tags[cle] = attributs[cle]
     return event
 
 
