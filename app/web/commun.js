@@ -119,6 +119,14 @@ export function surveillerResume({ url = "/pilotage/resume", onData, onErreur, b
   planifier();
 }
 
+// Page Analyse : message du tableau des clauses quand aucune clause n'est à afficher.
+// `reponses` : une entrée par version demandée — null tant que l'appel est en cours.
+export function messageSansClause(reponses) {
+  if (reponses.some((r) => r == null)) return "Chargement…";
+  if (!reponses.some((r) => r.ok)) return "Aucune clause : analyse en échec";
+  return "Aucune clause détectée.";
+}
+
 const AUCUN_TRAFIC = '<p class="vide">Aucun trafic dans la fenêtre.</p>';
 
 export function rendreTrafic(parVersion) {

@@ -1,4 +1,4 @@
-import { arrondi2, demarrerTimer, esc, fmtScore, icone, initTheme } from "/static/commun.js";
+import { arrondi2, demarrerTimer, esc, fmtScore, icone, initTheme, messageSansClause } from "/static/commun.js";
 
 const LIMITE_V1 = 16000;      // models/v1/config.yaml : contexte_max_caracteres (au-delà, v1 coupe)
 const SEUIL_RELECTURE = 0.6;  // models/v2/config.yaml : seuil_relecture
@@ -139,8 +139,8 @@ function tableauClauses(versions, etat) {
       if (!types.has(cleType(libelle))) types.set(cleType(libelle), libelle);
     }
   }
-  if (!types.size && versions.every((v) => etat[v]) && versions.some((v) => etat[v].ok)) {
-    return '<section class="carte"><h2>Clauses clés</h2><p class="vide">Aucune clause détectée.</p></section>';
+  if (!types.size) {
+    return `<section class="carte"><h2>Clauses clés</h2><p class="vide">${messageSansClause(versions.map((v) => etat[v]))}</p></section>`;
   }
   const tries = [...types.entries()].sort((a, b) => a[1].localeCompare(b[1], "fr"));
   const celluleClause = (v, cle) => cellule(v, etat[v], (version, corps) => {
