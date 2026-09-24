@@ -253,3 +253,18 @@ def test_metrics_lues_une_seule_fois_par_resume(metriques, registry, tmp_path, m
 
     assert len(lectures) == 1
     assert r["palier"]["requetes"] == 25 and r["decision"]["action"] == "progresser"
+
+
+def test_canary_expose_meme_si_metriques_illisibles(metriques, registry, monkeypatch):
+    """L'écran doit savoir qu'un canary tourne, même quand il ne peut pas en juger."""
+    _canary(registry)
+    monkeypatch.setattr(metriques, "lire", lambda depuis_s: (_ for _ in ()).throw(OSError("perm")))
+
+    r = resume(metriques, registry=registry)
+
+    assert r["canary"] == "v2.0.0"
+    assert r["palier"] is None and r["decision"] is None
+
+
+def test_sans_canary_champ_canary_nul(metriques, registry, tmp_path):
+    assert resume(metriques, registry=registry, candidats=tmp_path / "absent.jsonl")["canary"] is None

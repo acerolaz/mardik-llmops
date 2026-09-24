@@ -1,5 +1,5 @@
 import {
-  esc, fmtDuree, fmtEur, fmtMs, fmtPct, fmtScore, icone, initTheme, peindre, rendrePalier,
+  esc, etatSansVerdict, fmtDuree, fmtEur, fmtMs, fmtPct, fmtScore, icone, initTheme, peindre, rendrePalier,
   rendreTrafic, surveillerResume,
 } from "/static/commun.js";
 
@@ -32,9 +32,15 @@ let dernier = null;
 // --- Verdict ----------------------------------------------------------------
 function rendreVerdict(r) {
   const d = r.decision;
-  if (!d && r.palier) {
+  const sans = d ? null : etatSansVerdict(r);
+  if (sans === "indisponible") {
+    const pct = r.palier?.pourcentage;
     return `<p class="verdict-titre statut warn">${icone("warn")}Verdict indisponible</p>
-      <p>Un canary est en cours (${esc(r.palier.version)} à ${r.palier.pourcentage == null ? "?" : esc(r.palier.pourcentage)} %), mais le verdict ne peut pas être calculé : voir les alertes.</p>${rendreTrafic(r.par_version)}`;
+      <p>Un canary est en cours (${esc(r.canary)} à ${pct == null ? "?" : esc(pct)} %), mais le verdict ne peut pas être calculé : voir les alertes.</p>${rendreTrafic(r.par_version)}`;
+  }
+  if (sans === "inconnu") {
+    return `<p class="verdict-titre statut warn">${icone("warn")}État du déploiement inconnu</p>
+      <p>Le registre est illisible : impossible de savoir si un canary est en cours. Voir les alertes.</p>`;
   }
   if (!d) {
     return `<p class="verdict-titre statut neutre">${icone("ok")}Aucun canary en cours</p>
@@ -71,7 +77,11 @@ const coutParAnalyse = (s) => (s && s.requetes ? s.cout_total_eur / s.requetes :
 
 function rendreComparaison(r) {
   const d = r.decision;
-  if (!d) return '<p class="vide">Aucun canary en cours : rien à comparer.</p>';
+  if (!d) {
+    return etatSansVerdict(r) === "aucun"
+      ? '<p class="vide">Aucun canary en cours : rien à comparer.</p>'
+      : `<p class="indispo">${icone("warn")}Comparaison indisponible : voir les alertes.</p>`;
+  }
   const statsCanary = r.par_version[d.version];
   const statsActive = d.active ? r.par_version[d.active] : null;
   const constats = Object.fromEntries(d.constats.map((c) => [c.signal, c]));

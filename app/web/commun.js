@@ -127,6 +127,14 @@ export function messageSansClause(reponses) {
   return "Aucune clause détectée.";
 }
 
+// Page Pilotage, sans verdict : un canary tourne-t-il ? `r` : le résumé de pilotage.
+// « indisponible » : canary connu, verdict incalculable ; « inconnu » : registre illisible.
+export function etatSansVerdict(r) {
+  if (r.canary) return "indisponible";
+  if (r.alertes.some((a) => a.startsWith("registre illisible"))) return "inconnu";
+  return "aucun";
+}
+
 const AUCUN_TRAFIC = '<p class="vide">Aucun trafic dans la fenêtre.</p>';
 
 export function rendreTrafic(parVersion) {

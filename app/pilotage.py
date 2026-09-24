@@ -94,6 +94,7 @@ class ResumePilotage(BaseModel):
     total: int
     par_version: dict[str, StatsVersion]
     palier: Palier | None
+    canary: str | None      # connu même quand palier et verdict ne le sont pas
     decision: DecisionResponse | None
     seuils: SeuilsResponse | None
     alertes: list[str]

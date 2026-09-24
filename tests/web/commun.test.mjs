@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { arrondi2, fmtScore, messageSansClause } from "../../app/web/commun.js";
+import { arrondi2, etatSansVerdict, fmtScore, messageSansClause } from "../../app/web/commun.js";
 
 // Mêmes valeurs que Python ``round(v, 2)`` (construire_warnings) et ``f"{v:.2f}"`` (_fr).
 const PYTHON = { 0.595: 0.59, 0.605: 0.6, 0.745: 0.74, 0.755: 0.76, 0.6: 0.6, 0.42: 0.42 };
@@ -34,4 +34,18 @@ test("messageSansClause : échec quand toutes les analyses ont échoué", () => 
 test("messageSansClause : aucune clause détectée seulement si une analyse a abouti", () => {
   assert.equal(messageSansClause([OK_VIDE]), "Aucune clause détectée.");
   assert.equal(messageSansClause([OK_VIDE, ECHEC]), "Aucune clause détectée.");
+});
+
+test("etatSansVerdict : un canary connu sans verdict est « indisponible », jamais « aucun »", () => {
+  assert.equal(etatSansVerdict({ canary: "v2.0.0", alertes: ["métriques illisibles : perm"] }), "indisponible");
+  assert.equal(etatSansVerdict({ canary: "v2.0.0", alertes: ["seuils invalides : absent"] }), "indisponible");
+});
+
+test("etatSansVerdict : registre illisible → état inconnu", () => {
+  assert.equal(etatSansVerdict({ canary: null, alertes: ["registre illisible : index.json"] }), "inconnu");
+});
+
+test("etatSansVerdict : aucun canary seulement si le registre a été lu", () => {
+  assert.equal(etatSansVerdict({ canary: null, alertes: [] }), "aucun");
+  assert.equal(etatSansVerdict({ canary: null, alertes: ["seuils invalides : absent"] }), "aucun");
 });
