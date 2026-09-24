@@ -543,7 +543,7 @@ pas : concevez avec.
   `app/config.py`, variables `SENTRY_*` dans `.env.example`) : sans
   `SENTRY_DSN`, rien n'est initialisé et les traces restent sur la console. Le
   texte d'un contrat n'est jamais envoyé à Sentry.
-- **Tests** : `MOCK=on uv run pytest -q` : 373 passés ;
+- **Tests** : `MOCK=on uv run pytest -q` : tous verts ;
   `tests/unit/test_api_v1_intouchable.py` vérifie l'empreinte de
   `app/api_v1.py`.
 
