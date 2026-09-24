@@ -515,3 +515,61 @@ pas : concevez avec.
 - Un pourcentage de canary hors 10/50/100 n'active aucune étape du palier (paliers
   dupliqués en constante JS).
 - Une réponse 200 non JSON laisse le squelette de chargement affiché.
+
+### Non publié — refonte frontend (Analyse, Pilotage, Observabilité + Sentry)
+
+*2026-09-23 — branche `worktree-refonte-frontend-spec`, PR #8. Spec :
+`docs/superpowers/specs/2026-09-23-refonte-frontend-design.md` · Plan :
+`docs/superpowers/plans/2026-09-23-refonte-frontend.md`.*
+
+**Ajouté**
+
+- **Navigation à trois onglets** : Analyse (`/`), Pilotage (`/pilotage`),
+  Observabilité (`/observabilite`).
+- **Page Analyse** : modes v1, v2 ou comparaison, chronomètre par endpoint,
+  tableaux document et clauses, alertes, JSON brut repliable.
+- **Page Pilotage** (lecture seule) : verdict du pilote (promouvoir, progresser,
+  attendre, revenir en arrière), canary vs active, trois rétroactions, seuils,
+  traçabilité filtrable. `GET /pilotage/resume` gagne `decision` et `seuils`
+  (champs ajoutés uniquement) et 20 entrées de journal au lieu de 5.
+- **Observabilité** : `GET /observabilite/resume` (`app/observabilite.py`,
+  `ops/observabilite.py`) et page dédiée ; Sentry optionnel (`app/sentry.py`,
+  `app/config.py`, variables `SENTRY_*` dans `.env.example`) : sans
+  `SENTRY_DSN`, rien n'est initialisé et les traces restent sur la console. Le
+  texte d'un contrat n'est jamais envoyé à Sentry.
+- **Tests** : `MOCK=on uv run pytest -q` : 373 passés ;
+  `tests/unit/test_api_v1_intouchable.py` vérifie l'empreinte de
+  `app/api_v1.py`.
+
+**Modifié** — fichiers fournis
+
+- `app/main.py` : page et routeur `/observabilite`, initialisation de Sentry,
+  tag de version des requêtes `/v1` posé par une dépendance du routeur v1 (pour
+  ne pas toucher `app/api_v1.py`).
+- `app/telemetry.py` : champ `Telemetry.provider` (défaut `None`), exposé pour
+  brancher Sentry sur le `TracerProvider` existant. Aucun comportement changé.
+- `app/llm_client.py` : le message « réponse LLM non-JSON » ne cite plus
+  120 caractères de la réponse (qui recopie souvent le contrat) mais sa
+  longueur ; le message part tel quel dans le détail HTTP 503 et dans Sentry.
+- `tests/conftest.py` : `SENTRY_DSN` retiré de l'environnement des tests, pour
+  qu'un `.env` local n'envoie rien à un vrai Sentry.
+
+**Modifié** — autres
+
+- `app/api_v2.py`, `app/gateway.py` : tag de version Sentry posé par la route ;
+  la gateway résout la cible (`routage.resoudre`) puis appelle son moteur.
+- `app/routage.py` : `analyser()` supprimé (plus appelé depuis la gateway).
+- `ops/dashboard.py`, `app/pilotage.py` : verdict et seuils exposés.
+- `app/web/` : pages Analyse et Pilotage réécrites, page Observabilité ajoutée.
+- `pyproject.toml` : `pydantic-settings`, `sentry-sdk[fastapi,opentelemetry]`.
+
+**Inchangé** : `app/api_v1.py`, `models/v1/`, `ops/registry/`,
+`ops/drift_proxy.py`, `scripts/client_v1.py`, `scripts/traffic_sim.py`,
+`tests/integration/test_telemetrie_v1.py`, les contrats `/v1/analyse` et
+`/v2/analyse`.
+
+**Reste à faire**
+
+- Page Analyse : une réponse 200 mal formée laisse la colonne sur « … ».
+- Les deux correctifs d'interface (échec d'analyse, verdict indisponible) ne
+  sont couverts par aucun test de `tests/web/`.
