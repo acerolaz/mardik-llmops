@@ -102,5 +102,22 @@ def test_fournisseur_indisponible_503(client):
     assert reponse.json()["detail"] == "fournisseur LLM indisponible : délai dépassé"
 
 
+def test_la_fabrique_recoit_le_bundle_livre(client, registry):
+    _livrer_v2(registry)
+    registry.definir_actif("v2.0.0")
+    recus: list[str] = []
+
+    def fabrique(bundle: Bundle) -> FauxClient:
+        recus.append(bundle.version)
+        return FauxClient(bundle)
+
+    client.app.dependency_overrides[gateway.get_fabrique_client] = lambda: fabrique
+    reponse = client.post("/analyse", json={"texte": TEXTE})
+
+    assert reponse.status_code == 200, reponse.text
+    assert recus == ["v2.0.0"]
+    assert reponse.headers["x-mardik-version"] == "v2.0.0"
+
+
 def test_corps_invalide_422(client):
     assert client.post("/analyse", json={"texte": "court"}).status_code == 422

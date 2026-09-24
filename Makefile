@@ -11,7 +11,7 @@ install:            ## dépendances (uv)
 
 up:                 ## app + interface web + proxy de dérive + tableau de bord brut + pilote (docker compose)
 	docker compose up -d --build
-	@echo "interface : http://localhost:8000/ — pilotage : http://localhost:8000/pilotage — API : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard brut : http://localhost:8501 — pilote : docker compose logs -f pilote"
+	@echo "interface : http://localhost:8000/ — pilotage : http://localhost:8000/pilotage — observabilité : http://localhost:8000/observabilite — API : http://localhost:8000/docs — proxy : http://localhost:8080/_drift — dashboard brut : http://localhost:8501 — pilote : docker compose logs -f pilote"
 
 down:
 	docker compose down
@@ -43,10 +43,10 @@ etat:               ## répartition du trafic vue par la gateway (GET /gateway/e
 test:               ## tout (unitaires + intégration + acceptance), MOCK=on
 	MOCK=on uv run pytest -q
 
-test-unit:          ## pipeline v2, gate, versions, routage, transitions, workflows, signaux, pilotage, seuils, anonymisation : verts
+test-unit:          ## pipeline v2, gate, versions, routage, transitions, workflows, signaux, pilotage, seuils, anonymisation, sentry, api_v1 intouchable : verts
 	MOCK=on uv run pytest -q tests/unit
 
-test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard, interface : verts
+test-integration:   ## remédiation, v2, gate, publication, gateway, CLI de déploiement, surveillance, pilote, capture, enrichissement, dashboard, interface, observabilité : verts
 	MOCK=on uv run pytest -q tests/integration
 
 test-web:           ## module JS partagé de l'interface (Node, sans dépendance)

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mardik — Analyse</title>
-  <meta name="description" content="Analyse de contrats Mardik : comparer v1 et v2, ou passer par la gateway canary.">
+  <meta name="description" content="Analyse de contrats Mardik : v1, v2 ou les deux en comparaison, avec clauses clés, fiabilité, alertes et garantie de lecture complète.">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
   <script type="module" src="/static/analyse.js"></script>
@@ -15,28 +15,12 @@
     <nav class="nav" aria-label="Navigation principale">
       <a href="/" aria-current="page">Analyse</a>
       <a href="/pilotage">Pilotage</a>
+      <a href="/observabilite">Observabilité</a>
     </nav>
     <button id="theme" class="bouton bouton-fantome" type="button" aria-label="Changer de thème"></button>
   </header>
   <main>
-    <section aria-labelledby="t-kpi">
-      <h1 id="t-kpi" class="visuellement-cache">Analyse de contrats — indicateurs clés</h1>
-      <div class="grille-kpi">
-        <article class="carte" aria-labelledby="t-p95">
-          <h2 id="t-p95">Latence P95 vs SLO 8 s</h2>
-          <div id="kpi-p95" aria-live="polite"><div class="squelette"><span></span><span></span></div></div>
-        </article>
-        <article class="carte" aria-labelledby="t-canary">
-          <h2 id="t-canary">Canary en cours</h2>
-          <div id="kpi-canary" aria-live="polite"><div class="squelette"><span></span><span></span></div></div>
-        </article>
-      </div>
-      <div class="barre-maj barre-maj-kpi">
-        <span id="maj">en attente…</span>
-        <button id="pause" class="bouton" type="button" aria-pressed="false">Pause</button>
-        <a href="/pilotage">Tout le pilotage →</a>
-      </div>
-    </section>
+    <h1 class="titre-page">Analyse de contrat</h1>
 
     <form id="form-analyse" class="carte" novalidate>
       <div class="champ">
@@ -54,15 +38,17 @@
       </div>
       <div class="actions">
         <fieldset class="modes">
-          <legend>Mode d'analyse</legend>
-          <label><input type="radio" name="mode" value="comparer" checked> Comparer v1 / v2</label>
-          <label><input type="radio" name="mode" value="gateway"> Via la gateway</label>
+          <legend>Traitement</legend>
+          <label><input type="radio" name="mode" value="v1"> v1</label>
+          <label><input type="radio" name="mode" value="v2" checked> v2</label>
+          <label><input type="radio" name="mode" value="comparer"> Comparer v1 + v2</label>
         </fieldset>
         <button id="analyser" class="bouton bouton-primaire" type="submit">Analyser</button>
       </div>
     </form>
 
-    <div id="resultats" class="resultats"></div>
+    <section id="suivi" class="timers" aria-label="Temps de traitement par endpoint" hidden></section>
+    <div id="resultats" class="resultats-analyse"></div>
   </main>
 </body>
 </html>

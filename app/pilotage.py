@@ -8,7 +8,7 @@ agrégation n'est dupliquée ici. Les sources illisibles sont déjà dégradées
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
@@ -59,11 +59,44 @@ class EntreeJournal(BaseModel):
     motif: str | None = None
 
 
+class ConstatResponse(BaseModel):
+    signal: str
+    valeur: float | None
+    seuil: float
+    ok: bool
+
+
+class DecisionResponse(BaseModel):
+    """Le verdict du pilote pour le canary en cours (lecture seule)."""
+
+    action: Literal["rollback", "promouvoir", "progresser", "attendre"]
+    version: str
+    active: str | None
+    motif: str
+    pourcentage_suivant: int | None
+    constats: list[ConstatResponse]
+
+
+class SeuilsResponse(BaseModel):
+    """Miroir de ``ops/seuils_pilotage.yaml``."""
+
+    fenetre_s: float
+    minimum: int
+    intervalle_s: float
+    derive: dict[str, float]
+    promotion: dict[str, Any]
+    capture: dict[str, float]
+    motif: str
+
+
 class ResumePilotage(BaseModel):
     fenetre_s: float
     total: int
     par_version: dict[str, StatsVersion]
     palier: Palier | None
+    canary: str | None      # connu même quand palier et verdict ne le sont pas
+    decision: DecisionResponse | None
+    seuils: SeuilsResponse | None
     alertes: list[str]
     candidats: int
     journal: list[EntreeJournal]

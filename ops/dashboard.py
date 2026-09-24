@@ -20,7 +20,12 @@ Contrat attendu :
                      "requetes": …, "duree_min_s": …, "requetes_min": …} | None,
           "alertes": […],
           "candidats": 3,
-          "journal": [ …5 derniers événements de déploiement… ]
+          "canary": "v2.0.0" | None   (de l'index, même si les métriques sont illisibles),
+          "decision": {"action": "rollback|promouvoir|progresser|attendre",
+                       "version": …, "active": …, "motif": …,
+                       "pourcentage_suivant": …, "constats": […]} | None,
+          "seuils": {… ops/seuils_pilotage.yaml …} | None,
+          "journal": [ …20 derniers événements de déploiement… ]
         }
         Les versions sans trafic dans la fenêtre n'apparaissent pas.
         ``score_moyen`` vaut ``None`` pour une version qui ne produit pas de
@@ -43,7 +48,14 @@ from typing import Any
 
 from app.capture import candidats_en_attente
 from app.telemetry import Mesure, MetricsStore
-from ops.pilotage import debut_palier, detecter_derive, resume_metier, version_surveillee
+from ops.pilotage import (
+    Derive,
+    debut_palier,
+    detecter_derive,
+    evaluer_palier,
+    resume_metier,
+    version_surveillee,
+)
 from ops.registry import ErreurRegistre, Registry
 from ops.seuils import ErreurSeuilsPilotage, SeuilsPilotage, charger_seuils_pilotage
 from ops.signaux import agreger, filtrer, histogramme, scores, serie_par_minute
@@ -85,8 +97,8 @@ def _lu(lire: Callable[[], Any], defaut: Any, alertes: list[str], alerte: str,
 
 def _palier(
     index: dict[str, Any],
-    journal: list[dict[str, Any]],
-    metriques: MetricsStore,
+    debut: float | None,
+    lues: list[Mesure],
     seuils: SeuilsPilotage | None,
     maintenant: float,
 ) -> dict[str, Any] | None:
@@ -95,9 +107,7 @@ def _palier(
     canary = index.get("canary")
     if canary is None:
         return None
-    debut = debut_palier(journal, canary)
-    requetes = 0 if debut is None else len(filtrer(
-        metriques.lire(depuis_s=max(maintenant - debut, 0) + 1), canary, depuis_ts=debut))
+    requetes = 0 if debut is None else len(filtrer(lues, canary, depuis_ts=debut))
     return {
         "version": canary,
         "pourcentage": index.get("canary_percent"),
@@ -106,6 +116,40 @@ def _palier(
         "duree_min_s": seuils.promotion.duree_min_s if seuils else None,
         "requetes_min": seuils.promotion.requetes_min if seuils else None,
     }
+
+
+def _decision(
+    index: dict[str, Any],
+    debut: float | None,
+    lues: list[Mesure],
+    seuils: SeuilsPilotage | None,
+    derive: Derive | None,
+    maintenant: float,
+) -> dict[str, Any] | None:
+    """Le verdict du pilote, avec ses propres fonctions et sur le même compte que
+    ``ops.deploy.tour`` : l'écran montre ce que le pilote décidera. Une dérive
+    critique du canary l'emporte sur le palier."""
+    canary = index.get("canary")
+    if canary is None or seuils is None:
+        return None
+    active = index.get("active")
+    if derive is not None and derive.version == canary and derive.critique:
+        return {"action": "rollback", "version": canary, "active": active, "motif": derive.motif,
+                "pourcentage_suivant": None, "constats": [c.to_dict() for c in derive.constats]}
+    if debut is None:
+        return None
+    depuis_s = maintenant - debut
+    d = evaluer_palier(
+        canary,
+        filtrer(lues, canary, depuis_ts=debut),
+        filtrer(lues, active or "", depuis_ts=debut),
+        seuils,
+        depuis_s=depuis_s,
+        pourcentage=int(index.get("canary_percent") or 0),
+    )
+    return {"action": d.action, "version": canary, "active": active, "motif": d.motif,
+            "pourcentage_suivant": d.pourcentage_suivant,
+            "constats": [c.to_dict() for c in d.constats]}
 
 
 def resume(
@@ -131,13 +175,26 @@ def resume(
         except ErreurSeuilsPilotage as exc:
             alertes.append(f"seuils invalides : {exc}")
     fenetre = fenetre_s if fenetre_s is not None else (seuils.fenetre_s if seuils else 300)
-    mesures = _lu(lambda: metriques.lire(depuis_s=fenetre), [], alertes, "métriques illisibles")
     index, journal = _lu(lambda: (registry.index(), registry.journal()), ({}, []), alertes,
                          "registre illisible", (ErreurRegistre, *_ILLISIBLE))
+    # Une seule lecture de metrics.jsonl : la fenêtre, et tout le palier du canary
+    # s'il a commencé avant (palier et verdict se comptent sur le palier entier).
+    canary = index.get("canary")
+    debut_canary = debut_palier(journal, canary) if canary else None
+    if not fenetre or debut_canary is None:
+        portee = fenetre                       # 0 : toutes les mesures, comme MetricsStore.lire
+    else:
+        portee = max(fenetre, max(maintenant - debut_canary, 0) + 1)
+    lues = _lu(lambda: metriques.lire(depuis_s=portee), None, alertes, "métriques illisibles")
+    lisibles = lues is not None                # illisibles : ni palier ni verdict, plutôt qu'un faux 0
+    lues = lues or []
+    seuil_fenetre = time.time() - fenetre      # même borne que MetricsStore.lire(depuis_s=fenetre)
+    mesures = [m for m in lues if m.ts >= seuil_fenetre] if fenetre else lues
 
+    derive: Derive | None = None
     surveillee = version_surveillee(index)
     if seuils is not None and surveillee is not None:
-        debut = debut_palier(journal, surveillee) if index.get("canary") == surveillee else None
+        debut = debut_canary if canary == surveillee else None
         derive = detecter_derive(
             surveillee, filtrer(mesures, surveillee, depuis_ts=debut), seuils.derive,
             minimum=seuils.minimum,
@@ -154,18 +211,21 @@ def resume(
                 valeur=c.valeur, seuil=c.seuil,
             ))
 
-    palier = _lu(lambda: _palier(index, journal, metriques, seuils, maintenant), None, alertes,
-                 "métriques illisibles")
+    palier = _palier(index, debut_canary, lues, seuils, maintenant) if lisibles else None
     candidats_n = _lu(lambda: len(candidats_en_attente(candidats)), 0, alertes,
                       "candidats illisibles")
+    decision = _decision(index, debut_canary, lues, seuils, derive, maintenant) if lisibles else None
     return {
         "fenetre_s": fenetre,
         "total": len(mesures),
         "par_version": _par_version(mesures),
         "palier": palier,
+        "canary": canary,
+        "decision": decision,
+        "seuils": seuils.to_dict() if seuils else None,
         "alertes": alertes,
         "candidats": candidats_n,
-        "journal": journal[-5:],
+        "journal": journal[-20:],
     }
 
 

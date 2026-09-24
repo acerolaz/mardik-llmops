@@ -26,6 +26,7 @@ from app.api_v2 import ReponseAnalyseV2
 from app.capture import Capture, capturer, get_capture
 from app.llm_client import Bundle, ErreurLLM, LLMClient
 from app.routage import choisir_version as choisir_version
+from app.sentry import etiqueter_version
 from app.telemetry import Telemetry, build_default_telemetry
 from ops.registry import Registry
 
@@ -80,10 +81,11 @@ def analyse(
     fabrique_client: Callable[[Bundle], LLMClient] = Depends(get_fabrique_client),
     capture: Capture = Depends(get_capture),
 ) -> ReponseAnalyseV1 | ReponseAnalyseV2:
+    cible = routage.resoudre(registry, tirage)
+    etiqueter_version(cible.bundle)
+    version = cible.version
     try:
-        version, reponse = routage.analyser(
-            requete.texte, registry, telemetry, tirage, fabrique_client
-        )
+        reponse = cible.moteur(requete.texte, fabrique_client(cible.bundle), telemetry)
     except ErreurLLM as exc:
         raise HTTPException(
             status_code=503, detail=f"fournisseur LLM indisponible : {exc}"

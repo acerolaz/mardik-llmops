@@ -58,6 +58,7 @@ def test_seuils_invalides_signales_sans_bloquer(metriques, registry, monkeypatch
     assert r["par_version"]["v1.0.0"]["requetes"] == 3
     assert r["alertes"][0].startswith("seuils invalides")
     assert r["fenetre_s"] == 300           # seuils invalides → repli sur 300 s
+    assert r["seuils"] is None and r["decision"] is None
 
 
 def test_fenetre_par_defaut_suit_les_seuils(metriques, registry, monkeypatch, tmp_path):
@@ -173,3 +174,110 @@ def test_metriques_illisibles_signalees_sans_500(metriques, registry, monkeypatc
     assert r["palier"] is None
     assert any("métriques illisibles" in a for a in r["alertes"])
     assert "métriques illisibles" in rendre_texte(r)
+
+
+def _resume_apres(metriques, registry, tmp_path, entree, secondes):
+    return resume(metriques, registry=registry, candidats=tmp_path / "absent.jsonl",
+                  maintenant=entree["ts"] + secondes)
+
+
+def test_decision_attendre_faute_de_volume(metriques, registry, tmp_path):
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 12, score=0.9)
+
+    d = _resume_apres(metriques, registry, tmp_path, entree, 42)["decision"]
+
+    assert (d["action"], d["version"], d["active"]) == ("attendre", "v2.0.0", "v1.0.0")
+    assert d["motif"] == "palier 10 % : 12/20 requêtes, 42/60 s"
+    assert d["constats"] == [] and d["pourcentage_suivant"] is None
+
+
+def test_decision_attendre_critere_non_tenu(metriques, registry, tmp_path):
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 25, score=0.72)    # ≥ 0,70 : pas de dérive ; < 0,75 : palier non tenu
+
+    d = _resume_apres(metriques, registry, tmp_path, entree, 120)["decision"]
+
+    assert d["action"] == "attendre"
+    assert d["motif"].startswith("critère non tenu : score_moyen")
+    assert {"signal": "score_moyen", "valeur": 0.72, "seuil": 0.75, "ok": False} in d["constats"]
+
+
+def test_decision_progresser(metriques, registry, tmp_path):
+    entree = _canary(registry, 10)
+    _mesures(metriques, "v2.0.0", 25, score=0.9)
+
+    d = _resume_apres(metriques, registry, tmp_path, entree, 120)["decision"]
+
+    assert (d["action"], d["pourcentage_suivant"]) == ("progresser", 50)
+    assert d["constats"] and all(c["ok"] for c in d["constats"])
+
+
+def test_decision_promouvoir(metriques, registry, tmp_path):
+    entree = _canary(registry, 50)
+    _mesures(metriques, "v2.0.0", 25, score=0.9)
+
+    d = _resume_apres(metriques, registry, tmp_path, entree, 120)["decision"]
+
+    assert (d["action"], d["pourcentage_suivant"]) == ("promouvoir", 100)
+
+
+def test_decision_rollback_prioritaire_sur_le_palier(metriques, registry, tmp_path):
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 25, score=0.5)     # dérive critique : score < 0,70
+
+    d = _resume_apres(metriques, registry, tmp_path, entree, 120)["decision"]
+
+    assert d["action"] == "rollback" and d["pourcentage_suivant"] is None
+    assert any(c["signal"] == "score_moyen" and not c["ok"] for c in d["constats"])
+
+
+def test_sans_canary_pas_de_verdict_mais_seuils_exposes(metriques, registry, tmp_path):
+    r = resume(metriques, registry=registry, candidats=tmp_path / "absent.jsonl")
+
+    assert r["decision"] is None
+    assert r["seuils"]["derive"]["score_min"] == 0.70
+    assert r["seuils"]["promotion"]["paliers"] == [10, 50, 100]
+    assert r["seuils"]["motif"]
+
+
+def test_metrics_lues_une_seule_fois_par_resume(metriques, registry, tmp_path, monkeypatch):
+    """Fenêtre, palier et verdict viennent de la même lecture de ``metrics.jsonl``."""
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 25, score=0.9)
+    lectures = []
+    lire = type(metriques).lire
+    monkeypatch.setattr(type(metriques), "lire", lambda self, *a, **k: lectures.append(1) or lire(self, *a, **k))
+
+    r = _resume_apres(metriques, registry, tmp_path, entree, 120)
+
+    assert len(lectures) == 1
+    assert r["palier"]["requetes"] == 25 and r["decision"]["action"] == "progresser"
+
+
+def test_canary_expose_meme_si_metriques_illisibles(metriques, registry, monkeypatch):
+    """L'écran doit savoir qu'un canary tourne, même quand il ne peut pas en juger."""
+    _canary(registry)
+    monkeypatch.setattr(metriques, "lire", lambda depuis_s: (_ for _ in ()).throw(OSError("perm")))
+
+    r = resume(metriques, registry=registry)
+
+    assert r["canary"] == "v2.0.0"
+    assert r["palier"] is None and r["decision"] is None
+
+
+def test_sans_canary_champ_canary_nul(metriques, registry, tmp_path):
+    assert resume(metriques, registry=registry, candidats=tmp_path / "absent.jsonl")["canary"] is None
+
+
+def test_fenetre_zero_compte_tout_le_trafic(metriques, registry, tmp_path):
+    """``--fenetre 0`` : toutes les mesures, comme ``MetricsStore.lire(depuis_s=0)``."""
+    _mesures(metriques, "v1.0.0", 5, score=None, ts=time.time() - 3600)   # avant le palier
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 3, score=0.9)
+
+    r = resume(metriques, fenetre_s=0, registry=registry, candidats=tmp_path / "absent.jsonl",
+               maintenant=entree["ts"] + 10)
+
+    assert r["total"] == 8
+    assert r["par_version"]["v1.0.0"]["requetes"] == 5

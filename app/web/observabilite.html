@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mardik — Observabilité</title>
+  <meta name="description" content="Observabilité Mardik : métriques par route, erreurs récentes, traces et logs dans Sentry.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/observabilite.js"></script>
+</head>
+<body>
+  <header class="entete">
+    <a class="marque" href="/"><span id="logo"></span>Mardik</a>
+    <nav class="nav" aria-label="Navigation principale">
+      <a href="/">Analyse</a>
+      <a href="/pilotage">Pilotage</a>
+      <a href="/observabilite" aria-current="page">Observabilité</a>
+    </nav>
+    <button id="theme" class="bouton bouton-fantome" type="button" aria-label="Changer de thème"></button>
+  </header>
+  <main id="observabilite">
+    <div class="barre-maj">
+      <h1 class="titre-page">Observabilité</h1>
+      <span id="fenetre" class="chiffre"></span>
+      <span id="maj" aria-live="off">en attente…</span>
+      <button id="pause" class="bouton" type="button" aria-pressed="false">Pause</button>
+    </div>
+
+    <div id="etat-sentry" class="carte" aria-live="polite"><p class="vide">Chargement…</p></div>
+
+    <section class="carte" aria-labelledby="t-routes">
+      <h2 id="t-routes">Par route</h2>
+      <div class="table-defilante">
+        <table>
+          <thead><tr>
+            <th scope="col">Route</th><th scope="col">Version</th><th scope="col">Requêtes</th>
+            <th scope="col">Erreurs</th><th scope="col">P50</th><th scope="col">P95</th>
+            <th scope="col">Appels LLM</th><th scope="col">Tokens</th><th scope="col">Tronqués</th>
+            <th scope="col">Coût</th>
+          </tr></thead>
+          <tbody id="routes"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="carte" aria-labelledby="t-erreurs">
+      <h2 id="t-erreurs">Dernières erreurs</h2>
+      <div class="table-defilante">
+        <table>
+          <thead><tr><th scope="col">Date</th><th scope="col">Route</th><th scope="col">Version</th><th scope="col">Durée</th></tr></thead>
+          <tbody id="erreurs"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="carte" aria-labelledby="t-sentry">
+      <h2 id="t-sentry">Traces et logs dans Sentry</h2>
+      <div id="liens" class="liens-sentry"></div>
+    </section>
+  </main>
+</body>
+</html>

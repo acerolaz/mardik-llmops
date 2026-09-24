@@ -13,6 +13,8 @@ dependencies = [
     "opentelemetry-sdk>=1.27,<2",
     "structlog>=24,<26",
     "python-dotenv>=1,<2",
+    "pydantic-settings>=2.4,<3",
+    "sentry-sdk[fastapi,opentelemetry]>=2.40,<3",
 ]
 
 [dependency-groups]

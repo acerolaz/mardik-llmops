@@ -1,6 +1,6 @@
 """Routage canary : quelle version livrée sert une requête, et avec quel moteur.
 
-Service sans HTTP (la gateway le délègue) :
+Service sans HTTP ; la gateway résout la cible puis appelle son moteur :
 
     choisir_version(active, canary, canary_percent, tirage) -> str
         fonction pure : ``tirage`` ∈ [0, 100[ ; ``canary`` si un canary est
@@ -10,8 +10,6 @@ Service sans HTTP (la gateway le délègue) :
         relit l'index à CHAQUE appel (une promotion ou un rollback prend effet
         sans redémarrage), charge le bundle depuis le registre — ce qui a été
         livré, pas ``models/`` — et choisit le moteur selon sa stratégie.
-
-    analyser(texte, registry, telemetry, tirage, fabrique_client) -> (version, réponse)
 
 Ajouter une stratégie = ajouter une entrée à ``MOTEURS_HTTP``.
 """
@@ -30,7 +28,6 @@ from app.telemetry import Telemetry
 from ops.registry import Registry
 
 Moteur = Callable[[str, LLMClient, Telemetry], BaseModel]
-FabriqueClient = Callable[[Bundle], LLMClient]
 
 MOTEURS_HTTP: dict[str, Moteur] = {
     "monolithique": analyser_v1,
@@ -94,13 +91,3 @@ def resoudre(registry: Registry, tirage: float) -> Cible:
         raise StrategieInconnue(version, bundle.strategie)
     return Cible(version=version, bundle=bundle, moteur=moteur)
 
-
-def analyser(
-    texte: str,
-    registry: Registry,
-    telemetry: Telemetry,
-    tirage: float,
-    fabrique_client: FabriqueClient,
-) -> tuple[str, BaseModel]:
-    cible = resoudre(registry, tirage)
-    return cible.version, cible.moteur(texte, fabrique_client(cible.bundle), telemetry)

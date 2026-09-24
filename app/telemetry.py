@@ -114,6 +114,7 @@ class Telemetry:
     logger: Any
     metriques: MetricsStore
     spans: list[Any] = field(default_factory=list)
+    provider: TracerProvider | None = None
 
 
 def build_telemetry(
@@ -131,6 +132,7 @@ def build_telemetry(
         tracer=tracer,
         logger=structlog.get_logger(service_name),
         metriques=MetricsStore(metrics_path),
+        provider=provider,
     )
 
 

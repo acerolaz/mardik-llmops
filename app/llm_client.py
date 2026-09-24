@@ -154,7 +154,8 @@ def extraire_json(texte: str) -> Any:
                 return json.loads(texte[debut : fin + 1])
             except json.JSONDecodeError:
                 continue
-    raise ErreurLLM("réponse LLM non-JSON : " + texte[:120])
+    # Pas d'extrait : la réponse recopie souvent le contrat, et le message part dans Sentry.
+    raise ErreurLLM(f"réponse LLM non-JSON ({len(texte)} caractères)")
 
 
 def _env(nom: str, defaut: str = "") -> str:
