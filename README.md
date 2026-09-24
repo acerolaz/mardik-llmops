@@ -536,7 +536,7 @@ pas : concevez avec.
   tableaux document et clauses, alertes, JSON brut repliable.
 - **Page Pilotage** (lecture seule) : verdict du pilote (promouvoir, progresser,
   attendre, revenir en arrière), canary vs active, trois rétroactions, seuils,
-  traçabilité filtrable. `GET /pilotage/resume` gagne `decision` et `seuils`
+  traçabilité filtrable. `GET /pilotage/resume` gagne `decision`, `seuils` et `canary`
   (champs ajoutés uniquement) et 20 entrées de journal au lieu de 5.
 - **Observabilité** : `GET /observabilite/resume` (`app/observabilite.py`,
   `ops/observabilite.py`) et page dédiée ; Sentry optionnel (`app/sentry.py`,
@@ -577,5 +577,22 @@ pas : concevez avec.
 **Reste à faire**
 
 - Page Analyse : une réponse 200 mal formée laisse la colonne sur « … ».
-- Les deux correctifs d'interface (échec d'analyse, verdict indisponible) ne
-  sont couverts par aucun test de `tests/web/`.
+- Page Analyse : l'alerte « analyse échouée » (`alertes()` dans `analyse.js`)
+  n'a pas de test ; le message du tableau des clauses et l'état sans verdict
+  de Pilotage sont testés dans `tests/web/`.
+- Écart à la spec §7 : pas de squelette de chargement animé, un texte
+  « Chargement… » à la place.
+- Écarts à la spec non implémentés : pas de lien Sentry par ligne dans les
+  dernières erreurs (§5.3) ; sans canary, la version active n'est pas nommée
+  (§4.2).
+- Pilotage : toute la carte Verdict est en `aria-live` ; les jauges changent à
+  chaque rafraîchissement, donc elle est réannoncée toutes les 5 s (§7 : à
+  annoncer seulement quand le verdict change).
+- Pilotage : les filtres du journal ignorent `seuils_invalides`,
+  `publication_refusee` et `pilotage_refus`.
+- Le journal à 20 entrées vaut aussi pour `make dashboard` et le tableau de
+  bord brut sur :8501.
+- `/observabilite/resume` renvoie une 500 si `metrics.jsonl` est illisible, là
+  où `/pilotage/resume` affiche une alerte.
+- `test_observabilite` ne vérifie pas que les erreurs récentes sont triées de la
+  plus récente à la plus ancienne.
