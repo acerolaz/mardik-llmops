@@ -239,3 +239,17 @@ def test_sans_canary_pas_de_verdict_mais_seuils_exposes(metriques, registry, tmp
     assert r["seuils"]["derive"]["score_min"] == 0.70
     assert r["seuils"]["promotion"]["paliers"] == [10, 50, 100]
     assert r["seuils"]["motif"]
+
+
+def test_metrics_lues_une_seule_fois_par_resume(metriques, registry, tmp_path, monkeypatch):
+    """Fenêtre, palier et verdict viennent de la même lecture de ``metrics.jsonl``."""
+    entree = _canary(registry)
+    _mesures(metriques, "v2.0.0", 25, score=0.9)
+    lectures = []
+    lire = type(metriques).lire
+    monkeypatch.setattr(type(metriques), "lire", lambda self, *a, **k: lectures.append(1) or lire(self, *a, **k))
+
+    r = _resume_apres(metriques, registry, tmp_path, entree, 120)
+
+    assert len(lectures) == 1
+    assert r["palier"]["requetes"] == 25 and r["decision"]["action"] == "progresser"

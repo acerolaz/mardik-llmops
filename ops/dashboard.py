@@ -97,7 +97,7 @@ def _lu(lire: Callable[[], Any], defaut: Any, alertes: list[str], alerte: str,
 def _palier(
     index: dict[str, Any],
     journal: list[dict[str, Any]],
-    metriques: MetricsStore,
+    lues: list[Mesure],
     seuils: SeuilsPilotage | None,
     maintenant: float,
 ) -> dict[str, Any] | None:
@@ -107,8 +107,7 @@ def _palier(
     if canary is None:
         return None
     debut = debut_palier(journal, canary)
-    requetes = 0 if debut is None else len(filtrer(
-        metriques.lire(depuis_s=max(maintenant - debut, 0) + 1), canary, depuis_ts=debut))
+    requetes = 0 if debut is None else len(filtrer(lues, canary, depuis_ts=debut))
     return {
         "version": canary,
         "pourcentage": index.get("canary_percent"),
@@ -122,7 +121,7 @@ def _palier(
 def _decision(
     index: dict[str, Any],
     journal: list[dict[str, Any]],
-    metriques: MetricsStore,
+    lues: list[Mesure],
     seuils: SeuilsPilotage | None,
     derive: Derive | None,
     maintenant: float,
@@ -141,11 +140,10 @@ def _decision(
     if debut is None:
         return None
     depuis_s = maintenant - debut
-    mesures = metriques.lire(depuis_s=max(depuis_s, 0) + 1)
     d = evaluer_palier(
         canary,
-        filtrer(mesures, canary, depuis_ts=debut),
-        filtrer(mesures, active or "", depuis_ts=debut),
+        filtrer(lues, canary, depuis_ts=debut),
+        filtrer(lues, active or "", depuis_ts=debut),
         seuils,
         depuis_s=depuis_s,
         pourcentage=int(index.get("canary_percent") or 0),
@@ -178,9 +176,18 @@ def resume(
         except ErreurSeuilsPilotage as exc:
             alertes.append(f"seuils invalides : {exc}")
     fenetre = fenetre_s if fenetre_s is not None else (seuils.fenetre_s if seuils else 300)
-    mesures = _lu(lambda: metriques.lire(depuis_s=fenetre), [], alertes, "métriques illisibles")
     index, journal = _lu(lambda: (registry.index(), registry.journal()), ({}, []), alertes,
                          "registre illisible", (ErreurRegistre, *_ILLISIBLE))
+    # Une seule lecture de metrics.jsonl : la fenêtre, et tout le palier du canary
+    # s'il a commencé avant (palier et verdict se comptent sur le palier entier).
+    canary = index.get("canary")
+    debut_canary = debut_palier(journal, canary) if canary else None
+    portee = fenetre if debut_canary is None else max(fenetre, max(maintenant - debut_canary, 0) + 1)
+    lues = _lu(lambda: metriques.lire(depuis_s=portee), None, alertes, "métriques illisibles")
+    lisibles = lues is not None                # illisibles : ni palier ni verdict, plutôt qu'un faux 0
+    lues = lues or []
+    seuil_fenetre = time.time() - fenetre      # même borne que MetricsStore.lire(depuis_s=fenetre)
+    mesures = [m for m in lues if m.ts >= seuil_fenetre] if fenetre else lues
 
     derive: Derive | None = None
     surveillee = version_surveillee(index)
@@ -202,12 +209,10 @@ def resume(
                 valeur=c.valeur, seuil=c.seuil,
             ))
 
-    palier = _lu(lambda: _palier(index, journal, metriques, seuils, maintenant), None, alertes,
-                 "métriques illisibles")
+    palier = _palier(index, journal, lues, seuils, maintenant) if lisibles else None
     candidats_n = _lu(lambda: len(candidats_en_attente(candidats)), 0, alertes,
                       "candidats illisibles")
-    decision = _lu(lambda: _decision(index, journal, metriques, seuils, derive, maintenant), None,
-                   alertes, "métriques illisibles")
+    decision = _decision(index, journal, lues, seuils, derive, maintenant) if lisibles else None
     return {
         "fenetre_s": fenetre,
         "total": len(mesures),
