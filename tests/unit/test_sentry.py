@@ -284,7 +284,8 @@ def test_provider_collecte_ne_bloque_pas_un_nouveau_provider(monkeypatch):
     transport = TransportCapture()
     monkeypatch.setattr(sentry_sdk, "init", lambda **o: sentry_sdk.api.init(transport=transport, **o))
 
-    ancien = TracerProvider()
+    monkeypatch.setattr(module, "_providers_branches", weakref.WeakSet())   # sans les providers des autres tests
+    ancien = TracerProvider(shutdown_on_exit=False)   # sinon atexit le garde en vie
     module._providers_branches.add(ancien)
     ref = weakref.ref(ancien)
     del ancien
