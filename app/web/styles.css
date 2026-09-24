@@ -78,7 +78,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; display: grid
 }
 .barre-maj { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; color: var(--muted-fg); font-size: .9rem; }
 .chiffre { font-variant-numeric: tabular-nums; }
-.chiffre-grand { font: 700 2.2rem var(--police-titre); font-variant-numeric: tabular-nums; color: var(--primary); }
 .legende, .meta { color: var(--muted-fg); font-size: .875rem; margin: 8px 0 0; }
 .vide, .indispo { color: var(--muted-fg); margin: 0; }
 .indispo { display: flex; gap: 6px; align-items: center; }
@@ -161,14 +160,6 @@ tbody th { color: var(--fg); font-size: 1rem; text-transform: none; letter-spaci
 .json-brut { border: 1px solid var(--border); border-radius: var(--rayon); background: var(--card); padding: 0 16px; }
 .json-brut summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 700; }
 .json-brut pre { margin: 0 0 16px; padding: 12px; background: var(--muted); border-radius: 8px; overflow-x: auto; font-size: .8rem; }
-
-/* Squelette de chargement et apparition */
-.squelette { display: grid; gap: 10px; }
-.squelette span { height: 14px; border-radius: 4px; background: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
-.squelette span:nth-child(2) { width: 80%; } .squelette span:nth-child(3) { width: 60%; }
-@keyframes pulse { 50% { opacity: .45; } }
-.apparait { animation: apparition var(--duree) ease-out; }
-@keyframes apparition { from { opacity: 0; transform: translateY(6px); } }
 
 /* Page Pilotage */
 .alertes { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
