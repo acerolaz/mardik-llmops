@@ -30,9 +30,13 @@ def sentry_inactif_apres(monkeypatch):
     sentry_sdk.init()          # client sans DSN : inactif pour les tests suivants
 
 
-def test_sans_dsn_rien_n_est_initialise():
+def test_sans_dsn_rien_n_est_initialise(monkeypatch):
+    appels = []
+    monkeypatch.setattr(sentry_sdk, "init", lambda **options: appels.append(options))
+
     assert init_sentry(SentrySettings(), TracerProvider()) is False
-    assert not sentry_sdk.get_client().is_active()
+    assert appels == []                          # is_active() serait vrai même sans DSN
+    assert not sentry_sdk.get_client().dsn
 
 
 def test_filtre_retire_le_texte_du_contrat_et_etiquette_la_version():
