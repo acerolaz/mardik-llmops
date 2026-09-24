@@ -13,6 +13,7 @@ ne cite jamais le texte du contrat ni la réponse du LLM — il part tel quel.
 from __future__ import annotations
 
 from typing import Any
+from weakref import WeakSet
 
 import sentry_sdk
 from opentelemetry.sdk.trace import TracerProvider
@@ -23,7 +24,9 @@ from app.config import SentrySettings
 from app.llm_client import Bundle
 
 ATTRIBUTS_EN_TAGS = ("mardik.version", "mardik.model_version")
-_providers_branches: set[int] = set()
+# Référence faible : un provider collecté sort de l'ensemble, et un nouveau provider
+# n'est jamais confondu avec un ancien (pas de réutilisation d'``id``).
+_providers_branches: WeakSet[TracerProvider] = WeakSet()
 
 
 def filtrer_evenement(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any]:
@@ -72,7 +75,7 @@ def init_sentry(settings: SentrySettings, provider: TracerProvider | None) -> bo
         before_send=filtrer_evenement,
         before_send_transaction=filtrer_evenement,
     )
-    if provider is not None and id(provider) not in _providers_branches:
+    if provider is not None and provider not in _providers_branches:
         provider.add_span_processor(SentrySpanProcessor())
-        _providers_branches.add(id(provider))
+        _providers_branches.add(provider)
     return True

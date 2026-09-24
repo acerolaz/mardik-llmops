@@ -255,3 +255,35 @@ def test_erreur_de_la_route_v1_etiquetee_avec_la_version(monkeypatch):
 
     (erreur,) = [e for e in evenements if e.get("exception")]
     assert erreur["tags"]["mardik.version"] == Bundle.charger("v1").version
+
+
+def _processeurs_sentry(provider: TracerProvider) -> int:
+    from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
+
+    return sum(isinstance(p, SentrySpanProcessor)
+               for p in provider._active_span_processor._span_processors)
+
+
+def test_processeur_sentry_ajoute_une_seule_fois_par_provider(monkeypatch):
+    transport = TransportCapture()
+    monkeypatch.setattr(sentry_sdk, "init", lambda **o: sentry_sdk.api.init(transport=transport, **o))
+    provider = TracerProvider()
+
+    init_sentry(SentrySettings(dsn=DSN_FACTICE), provider)
+    init_sentry(SentrySettings(dsn=DSN_FACTICE), provider)
+
+    assert _processeurs_sentry(provider) == 1
+
+
+def test_nouveau_provider_branche_meme_si_son_id_a_deja_servi(monkeypatch):
+    """Un provider collecté libère son ``id`` : un nouveau provider peut le recevoir."""
+    import app.sentry as module
+
+    transport = TransportCapture()
+    monkeypatch.setattr(sentry_sdk, "init", lambda **o: sentry_sdk.api.init(transport=transport, **o))
+    provider = TracerProvider()
+    monkeypatch.setattr(module, "_providers_branches", {id(provider)})   # id laissé par un provider disparu
+
+    init_sentry(SentrySettings(dsn=DSN_FACTICE), provider)
+
+    assert _processeurs_sentry(provider) == 1
