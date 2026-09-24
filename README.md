@@ -45,13 +45,15 @@ make up                      # app + interface :8000, proxy de dérive :8080, da
 
 Sans docker : `make proxy` dans un terminal, `make serve` dans un autre.
 
-**L'interface** : <http://localhost:8000/>. La page **Analyse** envoie le même contrat à
-`/v1` et `/v2` côte à côte (ou via la gateway canary, avec la version servie), avec deux
-exemples prêts : *Exemple court* (`c02`) et *Exemple long* (`c07`, 62 ko : « Contrat
-tronqué » côté v1, indice de fiabilité et clauses par section côté v2). Son bandeau suit
-la latence P95 face au SLO de 8 s et le canary en cours. La page **Pilotage**
-(<http://localhost:8000/pilotage>) affiche tout le tableau de bord : alertes, trafic,
-palier, candidats, métriques par version, journal. Rafraîchies toutes les 5 s (bouton pause),
+**L'interface** : <http://localhost:8000/>, trois onglets. La page **Analyse** envoie le
+contrat à `/v1`, à `/v2` ou aux deux en comparaison, avec un chronomètre par appel et deux
+exemples prêts : *Exemple court* (`c02`) et *Exemple long* (`c07`, 62 ko : « non, tronqué »
+côté v1, indice de fiabilité et clauses par section côté v2). La page **Pilotage**
+(<http://localhost:8000/pilotage>), en lecture seule, répond à « promouvoir, attendre ou
+revenir en arrière ? » : verdict du pilote, canary vs active, les trois rétroactions, seuils,
+journal filtrable. La page **Observabilité** (<http://localhost:8000/observabilite>) donne
+les métriques par route, les dernières erreurs et, si `SENTRY_DSN` est défini, les liens vers
+Sentry. Pilotage et Observabilité se rafraîchissent toutes les 5 s (bouton pause) ;
 clair/sombre.
 
 ```bash
@@ -79,10 +81,10 @@ curl -si localhost:8000/analyse -H 'content-type: application/json' \
 | Commande | Quoi |
 |---|---|
 | `make up` / `make down` | app + interface + proxy + dashboard brut + pilote (docker compose) |
-| `make serve` | app + interface en local, sans docker (<http://localhost:8000/>) |
+| `make serve` | app + interface en local, sans docker (<http://localhost:8000/>, `/pilotage`, `/observabilite`) |
 | `make test` | tout, en `MOCK=on` |
-| `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement, des workflows, des signaux, du pilotage, des seuils et de l'anonymisation (verts) |
-| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway, de la CLI de déploiement, de la surveillance, du pilote, de la capture, de l'enrichissement, du dashboard et de l'interface (verts) |
+| `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement, des workflows, des signaux, du pilotage, des seuils, de l'anonymisation, de Sentry et de l'intégrité de `app/api_v1.py` (verts) |
+| `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway, de la CLI de déploiement, de la surveillance, du pilote, de la capture, de l'enrichissement, du dashboard, de l'interface et de l'observabilité (verts) |
 | `make test-web` | le module JS partagé de l'interface (`node --test`, sans dépendance) |
 | `make test-acceptance` | les 10 tests du brief (verts) |
 | `make etat` | répartition courante du trafic vue par la gateway (`APP_URL`, défaut `http://localhost:8000`) |
@@ -112,26 +114,30 @@ runner auto-hébergé. Procédure : `docs/exploitation.md` §4 et §5.
 app/          main.py (FastAPI, handler 413), api_v1.py [INTOUCHABLE], api_v2.py [FAIT — v2.0.0],
               gateway.py [FAIT — routage canary, SP3], routage.py [FAIT — SP3],
               llm_client.py [FOURNI], telemetry.py [FOURNI], capture.py [SP4],
-              pilotage.py [GET /pilotage/resume — interface]
+              pilotage.py [GET /pilotage/resume — interface],
+              observabilite.py [GET /observabilite/resume — refonte],
+              sentry.py [Sentry optionnel — refonte], config.py [SentrySettings — refonte]
 app/web/     index.html + analyse.js (Analyse), pilotage.html + pilotage.js (Pilotage),
-              commun.js, styles.css [interface client]
+              observabilite.html + observabilite.js (Observabilité),
+              commun.js, styles.css [interface client, refonte]
 app/pipeline/ decoupage.py, extraction.py, consolidation.py, confiance.py, erreurs.py [FAIT — v2.0.0]
 models/       v1/config.yaml [FOURNI], v2/config.yaml [FAIT — bundle map_reduce_clauses]
 eval/         contrats/ (12 contrats, 3 longs), attendus.jsonl, fixtures/ (MOCK), seuils.yaml [FAIT],
               run_eval.py [FAIT — gate], history.jsonl, rapport.json [GÉNÉRÉS], enrichir.py [SP4]
 ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier, installer, canary,
               promotion, rollback FAIT — SP3 ; surveiller, piloter FAIT — SP4], dashboard.py, pilotage.py,
-              signaux.py, seuils.py [FAIT — SP4]
+              signaux.py, seuils.py [FAIT — SP4], observabilite.py [résumé par route — refonte]
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
 tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows,
-              signaux, pilotage, seuils_pilotage, calibrer, resume_metier, anonymisation, verrou_capture),
+              signaux, pilotage, seuils_pilotage, calibrer, resume_metier, anonymisation, verrou_capture,
+              sentry, api_v1_intouchable),
               integration/ (v1 + v2 + gate + publication + gateway + cli_deploy + surveiller + piloter
-              + capture + enrichir + dashboard + details_journal + interface),
+              + capture + enrichir + dashboard + details_journal + interface + observabilite),
               web/ (module JS de l'interface, node --test),
               acceptance/ (10 tests du brief : verts)
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [§4-§7 FAIT — SP3, SP4],
               superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication, routage/déploiement,
-              observabilité, interface client)
+              observabilité, interface client, refonte frontend)
 .github/      workflows/ci.yml — gates (MOCK + release), build, publication, canary (installation + 10 %) ;
               promotion.yml (50 %, 100 %) et rollback.yml — pilotage manuel
 ```
