@@ -1,7 +1,7 @@
 {
   "version": "v1.0.0",
   "commit": "historique",
-  "empreinte": "6a39aefea1a3",
+  "empreinte": "971b5736e2a8",
   "modele": "${LLM_MODEL}",
   "strategie": "monolithique",
   "note_eval": null,

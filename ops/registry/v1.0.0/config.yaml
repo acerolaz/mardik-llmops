@@ -21,7 +21,7 @@ prompt: |
 
 parametres:
   temperature: 0.2
-  max_tokens: 300
+  max_tokens: 4096  # un modèle qui raisonne (Kimi-K2.5) épuise 300 tokens avant de répondre
   seed: null
   contexte_max_caracteres: 16000  # ≈ 4 000 tokens : au-delà, le contrat est coupé
 
