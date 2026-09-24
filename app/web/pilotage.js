@@ -56,7 +56,7 @@ function bullet(signal, c, active) {
   return `<svg class="bullet-svg" viewBox="0 0 100 12" preserveAspectRatio="none" role="img"
       aria-label="${esc(s.libelle)} du canary : ${esc(s.fmt(c.valeur))}, seuil ${s.sens} ${esc(s.fmt(c.seuil))}">
     <rect class="bullet-fond" x="0" y="2" width="100" height="8" rx="2"/>
-    <rect class="bullet-barre ${c.ok ? "v2" : "ko"}" x="0" y="3.5" width="${pos(c.valeur)}" height="5" rx="1.5"/>
+    <rect class="bullet-barre ${c.ok ? "ok" : "ko"}" x="0" y="3.5" width="${pos(c.valeur)}" height="5" rx="1.5"/>
     <line class="bullet-cible" x1="${pos(c.seuil)}" x2="${pos(c.seuil)}" y1="0" y2="12" vector-effect="non-scaling-stroke"/>
   </svg>`;
 }

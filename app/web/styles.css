@@ -97,7 +97,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; display: grid
 
 /* Bullet chart (valeur vs seuil) */
 .bullet-fond { fill: var(--muted); }
-.bullet-barre.v1 { fill: var(--v1); } .bullet-barre.v2 { fill: var(--v2); }
 .bullet-cible { stroke: var(--fg); stroke-width: 2; }
 
 /* Barre de trafic */
@@ -177,7 +176,7 @@ tbody th { color: var(--fg); font-size: 1rem; text-transform: none; letter-spaci
 .verdict-titre { font: 700 1.5rem var(--police-titre); margin: 0 0 8px; }
 .statut.neutre { color: var(--muted-fg); }
 .bullet-svg { width: 100%; min-width: 120px; height: 18px; display: block; }
-.bullet-barre.ko { fill: var(--danger); }
+.bullet-barre.ok { fill: var(--ok); } .bullet-barre.ko { fill: var(--danger); }
 #filtres { margin-bottom: 12px; }
 #filtres .bouton[aria-pressed="true"] { background: var(--muted); color: var(--primary); font-weight: 700; }
 .table-defilante { overflow-x: auto; }
