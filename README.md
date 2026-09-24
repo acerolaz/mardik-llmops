@@ -45,6 +45,10 @@ make up                      # app + interface :8000, proxy de dérive :8080, da
 
 Sans docker : `make proxy` dans un terminal, `make serve` dans un autre.
 
+Azure : `AZURE_AI_INFERENCE_ENDPOINT`, `AZURE_AI_INFERENCE_API_KEY` et `LLM_MODEL` (nom du
+déploiement) ; quota : un HTTP 429 est réessayé `LLM_RETRY_429_MAX` fois (3), attente plafonnée
+à `LLM_RETRY_429_ATTENTE_MAX_S` (30 s). Santé : `GET /health` ; OpenAPI : `/docs`.
+
 **L'interface** : <http://localhost:8000/>, trois onglets. La page **Analyse** envoie le
 contrat à `/v1`, à `/v2` ou aux deux en comparaison, avec un chronomètre par appel et deux
 exemples prêts : *Exemple court* (`c02`) et *Exemple long* (`c07`, 62 ko : « non, tronqué »
@@ -52,8 +56,8 @@ côté v1, indice de fiabilité et clauses par section côté v2). La page **Pil
 (<http://localhost:8000/pilotage>), en lecture seule, répond à « promouvoir, attendre ou
 revenir en arrière ? » : verdict du pilote, canary vs active, les trois rétroactions, seuils,
 journal filtrable. La page **Observabilité** (<http://localhost:8000/observabilite>) donne
-les métriques par route, les dernières erreurs et, si `SENTRY_DSN` est défini, les liens vers
-Sentry. Pilotage et Observabilité se rafraîchissent toutes les 5 s (bouton pause) ;
+les métriques par route, les dernières erreurs et l'état de Sentry ; les liens vers Sentry
+s'affichent si `SENTRY_DSN` et `SENTRY_UI_URL` sont définis. Pilotage et Observabilité se rafraîchissent toutes les 5 s (bouton pause) ;
 clair/sombre.
 
 ```bash
@@ -83,7 +87,7 @@ curl -si localhost:8000/analyse -H 'content-type: application/json' \
 | `make up` / `make down` | app + interface + proxy + dashboard brut + pilote (docker compose) |
 | `make serve` | app + interface en local, sans docker (<http://localhost:8000/>, `/pilotage`, `/observabilite`) |
 | `make test` | tout, en `MOCK=on` |
-| `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement, des workflows, des signaux, du pilotage, des seuils, de l'anonymisation, de Sentry et de l'intégrité de `app/api_v1.py` (verts) |
+| `make test-unit` | les tests unitaires du pipeline v2, du gate, des versions, du routage, des transitions de déploiement, des workflows, des signaux, du pilotage, des seuils, de l'anonymisation, de Sentry, du réessai 429 (client LLM, proxy) et de l'intégrité de `app/api_v1.py` (verts) |
 | `make test-integration` | les tests hérités de la remédiation, de la v2, du gate, de la publication, de la gateway, de la CLI de déploiement, de la surveillance, du pilote, de la capture, de l'enrichissement, du dashboard, de l'interface et de l'observabilité (verts) |
 | `make test-web` | le module JS partagé de l'interface (`node --test`, sans dépendance) |
 | `make test-acceptance` | les 10 tests du brief (verts) |
@@ -130,7 +134,7 @@ ops/          drift_proxy.py [FOURNI], registry/ [FOURNI], deploy.py [publier, i
 scripts/      client_v1.py [FOURNI], traffic_sim.py [FOURNI]
 tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions, workflows,
               signaux, pilotage, seuils_pilotage, calibrer, resume_metier, anonymisation, verrou_capture,
-              sentry, api_v1_intouchable),
+              sentry, api_v1_intouchable, llm_client_retry, drift_proxy_retry_after),
               integration/ (v1 + v2 + gate + publication + gateway + cli_deploy + surveiller + piloter
               + capture + enrichir + dashboard + details_journal + interface + observabilite),
               web/ (module JS de l'interface, node --test),
@@ -138,7 +142,7 @@ tests/        unit/ (pipeline, analyser_v2, gate, versions, routage, transitions
 docs/         besoin_client.md, schema_remediation.md, dossier-conception.pdf, exploitation.md [§4-§7 FAIT — SP3, SP4],
               superpowers/specs/ et superpowers/plans/ (moteur v2, gate, publication, routage/déploiement,
               observabilité, interface client, refonte frontend)
-.github/      workflows/ci.yml — gates (MOCK + release), build, publication, canary (installation + 10 %) ;
+.github/      workflows/ci.yml — lint, tests (Python + JS), gates (MOCK + release), build, publication, canary (installation + 10 %) ;
               promotion.yml (50 %, 100 %) et rollback.yml — pilotage manuel
 ```
 
@@ -521,6 +525,25 @@ pas : concevez avec.
 - Un pourcentage de canary hors 10/50/100 n'active aucune étape du palier (paliers
   dupliqués en constante JS).
 - Une réponse 200 non JSON laisse le squelette de chargement affiché.
+
+### Non publié — configuration Azure AI Inference et réessai 429
+
+*2026-09-23 — PR #7, commit `62140b8`.*
+
+**Modifié**
+
+- Variables renommées `AZURE_AI_INFERENCE_ENDPOINT` / `AZURE_AI_INFERENCE_API_KEY` (app,
+  proxy, CI, `.env.example`) ; `LLM_MODEL` documentée (lue par les bundles via `${LLM_MODEL}`).
+- `models/v2/config.yaml` : `max_tokens` 800 → 4096 (le modèle raisonne avant de répondre) ;
+  empreinte v2 `e8c482a89400` → `c1446bfb90f5`.
+
+**Ajouté**
+
+- `app/llm_client.py` : un HTTP 429 est réessayé jusqu'à `LLM_RETRY_429_MAX` fois (3), en
+  attendant `Retry-After` sinon 2, 4, 8 s, plafonné à `LLM_RETRY_429_ATTENTE_MAX_S` (30 s).
+  Les 5xx ne sont jamais réessayés (le proxy de dérive en injecte).
+- `ops/drift_proxy.py` : relaie `retry-after` ; configuration Azure absente → 502 explicite.
+- Tests : `tests/unit/test_llm_client_retry.py`, `tests/unit/test_drift_proxy_retry_after.py`.
 
 ### Non publié — refonte frontend (Analyse, Pilotage, Observabilité + Sentry)
 
